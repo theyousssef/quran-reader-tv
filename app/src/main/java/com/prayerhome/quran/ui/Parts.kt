@@ -4,6 +4,7 @@ import android.view.KeyEvent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -37,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.drawscope.translate
@@ -74,6 +76,15 @@ private fun Modifier.rightLine(color: Color) = drawBehind { drawRect(color, Offs
 fun SidePanel(m: ReaderModel, f: Frame) {
     val th = m.theme
     val continueReq = remember { FocusRequester() }
+    // An invisible stop that holds focus while a tab's list is being replaced, so focus never lands on
+    // (and flashes) the bookmark card on the way from one list to the next.
+    val holder = remember { FocusRequester() }
+    val onCard = remember { booleanArrayOf(false) }
+    LaunchedEffect(Unit) { runCatching { holder.requestFocus() } }
+    fun switchTab(t: Int) {
+        runCatching { holder.requestFocus() }
+        m.tab = t
+    }
     val pad = when (th.deco) { Deco.AMBER -> listOf(44, 36, 30); Deco.INDIGO -> listOf(44, 34, 30); Deco.GOLD -> listOf(38, 30, 26) }
     Column(
         Modifier
@@ -83,8 +94,13 @@ fun SidePanel(m: ReaderModel, f: Frame) {
             .padding(start = pad[1].dp, end = pad[1].dp, top = pad[0].dp, bottom = pad[2].dp)
             .keys { code ->
                 when (code) {
-                    KeyEvent.KEYCODE_DPAD_RIGHT -> { if (m.tab < TAB_NAMES.size - 1) m.tab++ else m.closeMenu(); true }
-                    KeyEvent.KEYCODE_DPAD_LEFT -> { if (m.tab > 0) m.tab--; true }
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> { if (m.tab < TAB_NAMES.size - 1) switchTab(m.tab + 1) else m.closeMenu(); true }
+                    // In a list, ◀ goes straight to "Continue from bookmark"; on it, ◀ goes back a tab.
+                    KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        if (!onCard[0]) runCatching { continueReq.requestFocus() }
+                        else if (m.tab > 0) switchTab(m.tab - 1)
+                        true
+                    }
                     -KeyEvent.KEYCODE_DPAD_RIGHT, -KeyEvent.KEYCODE_DPAD_LEFT -> true
                     else -> false
                 }
@@ -92,8 +108,11 @@ fun SidePanel(m: ReaderModel, f: Frame) {
         verticalArrangement = Arrangement.spacedBy(if (th.deco == Deco.GOLD) 18.dp else 20.dp),
     ) {
         PanelHeader(th)
-        ContinueCard(m, continueReq)
-        Tabs(th, m.tab)
+        ContinueCard(m, continueReq, Modifier.onFocusChanged { onCard[0] = it.hasFocus })
+        Box {
+            Tabs(th, m.tab)
+            Box(Modifier.size(1.dp).focusRequester(holder).focusable())
+        }
         key(m.tab) { MenuList(m, continueReq) }
         T("▲▼ choose · OK open · ▶ next tab · Back close", th.ui, if (th.deco == Deco.GOLD) 15 else 16, th.muted)
     }
@@ -118,7 +137,7 @@ private fun PanelHeader(th: QTheme) {
         Deco.GOLD -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column {
                 Ar("القرآن الكريم", Fonts.ArefRuqaa, 46, th.arAccent, weight = 700, lineHeight = 1.45f)
-                T("The Holy Quran", Fonts.Cormorant, 23, th.muted, weight = 500, italic = true)
+                T("The Holy Quran", Fonts.Lora, 21, th.muted, weight = 500, italic = true)
             }
             Box(Modifier.padding(top = 10.dp).size(54.dp).clip(CircleShape).background(th.bg).border(1.dp, th.gold, CircleShape), contentAlignment = Alignment.Center) {
                 Icon(Ico.PANEL_CLOSE, th.arAccent, 22)
@@ -129,11 +148,11 @@ private fun PanelHeader(th: QTheme) {
 
 /** "Continue from bookmark": opens the bookmarked verse and lights it up (and moves a recitation there). */
 @Composable
-private fun ContinueCard(m: ReaderModel, fr: FocusRequester) {
+private fun ContinueCard(m: ReaderModel, fr: FocusRequester, modifier: Modifier = Modifier) {
     val th = m.theme
     val v = m.bookmark
     val r = Quran.refOf(v)
-    Focusable(onClick = { m.openBookmark() }, focusRequester = fr) { focused ->
+    Focusable(modifier, onClick = { m.openBookmark() }, focusRequester = fr) { focused ->
         val shape = RoundedCornerShape((if (th.deco == Deco.GOLD) 20 else 18).dp)
         val base = Modifier.fillMaxWidth().clip(shape)
             .background(if (th.deco == Deco.GOLD) th.bg else th.card, shape)
@@ -145,7 +164,7 @@ private fun ContinueCard(m: ReaderModel, fr: FocusRequester) {
                     Icon(Ico.BOOKMARK, ic, 28, stroke = 2f)
                 }
                 Column(Modifier.weight(1f)) {
-                    T("Continue from bookmark", Fonts.Cormorant, 23, th.text, weight = 600)
+                    T("Continue from bookmark", Fonts.Lora, 21, th.text, weight = 600)
                     T("${Quran.nameEn(r.surah)} · Verse ${r.ayah} · Juz ${Quran.juzOf(v)} of 30", th.ui, 15, th.muted)
                 }
                 Icon(Ico.CHEVRON_RIGHT, th.arAccent, 22, stroke = 2f)
@@ -211,6 +230,8 @@ private fun ColumnScope.MenuList(m: ReaderModel, continueReq: FocusRequester) {
     LaunchedEffect(Unit) {
         if (count > 0) state.scrollToItem((target - 3).coerceAtLeast(0))
         frames(2)
+        var n = 0
+        while (reqs[target] == null && n++ < 10) frames(1)
         runCatching { (reqs[target] ?: continueReq).requestFocus() }
     }
     LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = state, verticalArrangement = Arrangement.spacedBy(when (th.deco) { Deco.AMBER -> 0.dp; Deco.INDIGO -> 4.dp; Deco.GOLD -> 3.dp })) {
@@ -229,7 +250,7 @@ private fun ColumnScope.MenuList(m: ReaderModel, continueReq: FocusRequester) {
                     val st = Quran.juzStart(j)
                     val idx = st.index
                     MenuRow(th, j, "$j", "Juz $j", "${Quran.nameEn(st.surah)} ${st.ayah} · page ${Quran.pageOf(idx)}", Quran.juzNames[i], j == Quran.juzOf(m.progressVerse), fr) {
-                        m.open(idx)
+                        m.openJuz(j)
                     }
                 }
             }
@@ -267,7 +288,7 @@ private fun MenuRow(th: QTheme, n: Int, num: String, title: String, meta: String
                 ) { T(num, th.ui, 15, if (hi) th.onAccent else th.badgeText, weight = 600) }
             }
             Column(Modifier.weight(1f)) {
-                if (th.deco == Deco.GOLD) T(title, Fonts.Cormorant, 23, th.text, weight = 600)
+                if (th.deco == Deco.GOLD) T(title, Fonts.Lora, 21, th.text, weight = 600)
                 else T(title, th.ui, if (th.deco == Deco.AMBER) 21 else 20, th.text)
                 T(meta, th.ui, if (th.deco == Deco.AMBER) 15 else 14, th.muted)
             }
@@ -350,7 +371,7 @@ fun Toolbar(m: ReaderModel, f: Frame) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (th.deco == Deco.GOLD) 16.dp else 18.dp)) {
-            if (th.deco == Deco.GOLD) T(Quran.nameEn(m.currentSurah), Fonts.Cormorant, 32, th.text, weight = 700)
+            if (th.deco == Deco.GOLD) T(Quran.nameEn(m.currentSurah), Fonts.Lora, 29, th.text, weight = 700)
             else T(Quran.nameEn(m.currentSurah), th.display, 26, th.text, weight = 500)
             if (th.deco == Deco.AMBER) Box(Modifier.size(1.dp, 26.dp).background(th.line))
             T("Juz ${Quran.juzOf(v)} · Page ${Quran.pageOf(v)} of ${Quran.PAGES}", th.ui, when (th.deco) { Deco.AMBER -> 20; Deco.INDIGO -> 19; Deco.GOLD -> 18 }, th.muted)
@@ -371,7 +392,7 @@ fun Toolbar(m: ReaderModel, f: Frame) {
             // In recitation mode the reciter is chosen from the player bar instead.
             if (!m.recMode) ToolButton(th, onClick = { m.openPopup(Popup.RECITER) }) {
                 Box(Modifier.size(30.dp).clip(CircleShape).background(th.monoBg), contentAlignment = Alignment.Center) {
-                    T(rs.reciter.mono, if (th.deco == Deco.GOLD) Fonts.Cormorant else th.ui, 13, th.monoFg, weight = 700)
+                    T(rs.reciter.mono, if (th.deco == Deco.GOLD) Fonts.Lora else th.ui, 13, th.monoFg, weight = 700)
                 }
                 T(rs.reciter.short, th.ui, if (th.deco == Deco.GOLD) 16 else 17, th.text)
             }
@@ -419,7 +440,7 @@ private fun RecModeBanner(m: ReaderModel) {
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             BannerRule(th, fg, true)
-            T("In Audio Recitation mode", if (th.deco == Deco.GOLD) Fonts.Cormorant else th.ui, if (th.deco == Deco.GOLD) 21 else 18, if (fo) th.onAccent else th.text, weight = if (th.deco == Deco.GOLD) 700 else 500, italic = th.deco == Deco.GOLD)
+            T("In Audio Recitation mode", if (th.deco == Deco.GOLD) Fonts.Lora else th.ui, if (th.deco == Deco.GOLD) 19 else 18, if (fo) th.onAccent else th.text, weight = if (th.deco == Deco.GOLD) 700 else 500, italic = th.deco == Deco.GOLD)
             T("·", th.ui, 18, fg)
             T("CLICK TO EXIT", th.ui, 15, fg, weight = 700, spacing = 0.12f)
             BannerRule(th, fg, false)
@@ -522,11 +543,11 @@ fun PlayerBar(m: ReaderModel, f: Frame) {
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Box(Modifier.size(56.dp).clip(CircleShape).background(th.monoBg), contentAlignment = Alignment.Center) {
-                    if (th.deco == Deco.GOLD) T(rs.reciter.mono, Fonts.Cormorant, 22, th.monoFg, weight = 700)
+                    if (th.deco == Deco.GOLD) T(rs.reciter.mono, Fonts.Lora, 20, th.monoFg, weight = 700)
                     else T(rs.reciter.mono, th.ui, if (th.deco == Deco.AMBER) 19 else 18, th.monoFg, weight = 600)
                 }
                 Column {
-                    if (th.deco == Deco.GOLD) T(rs.reciter.en, Fonts.Cormorant, 22, th.text, weight = 700)
+                    if (th.deco == Deco.GOLD) T(rs.reciter.en, Fonts.Lora, 20, th.text, weight = 700)
                     else T(rs.reciter.en, th.ui, if (th.deco == Deco.AMBER) 20 else 19, th.text, weight = 500)
                     T("${rs.reciter.style} · change", th.ui, if (th.deco == Deco.AMBER) 15 else 14, th.muted)
                 }
@@ -560,7 +581,7 @@ private fun PopupBox(th: QTheme, modifier: Modifier, title: String, arabic: Stri
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (th.deco == Deco.GOLD) T(title, Fonts.Cormorant, 28, th.text, Modifier.weight(1f), weight = 700)
+            if (th.deco == Deco.GOLD) T(title, Fonts.Lora, 25, th.text, Modifier.weight(1f), weight = 700)
             else T(title, th.ui, 24, th.text, Modifier.weight(1f), weight = 500)
             Ar(arabic, th.arUi, if (th.deco == Deco.GOLD) 28 else 24, th.arAccent, weight = th.arUiWeight)
         }
@@ -603,7 +624,7 @@ fun FontPopup(m: ReaderModel, f: Frame) {
             QURAN_FONTS.forEachIndexed { i, qf ->
                 PopupRow(th, 76, i == m.fontIndex, reqs[i], onClick = { m.setFont(i); m.closePopup() }) {
                     Column(Modifier.width(200.dp)) {
-                        if (th.deco == Deco.GOLD) T(qf.name, Fonts.Cormorant, 22, th.text, weight = 700) else T(qf.name, th.ui, 19, th.text, weight = 500)
+                        if (th.deco == Deco.GOLD) T(qf.name, Fonts.Lora, 20, th.text, weight = 700) else T(qf.name, th.ui, 19, th.text, weight = 500)
                         T(qf.desc, th.ui, 14, th.muted)
                     }
                     Ar(m.quran.basmala, qf.family, 28, th.text, Modifier.weight(1f), lineHeight = 1.9f, align = TextAlign.Right)
@@ -628,10 +649,10 @@ fun ReciterPopup(m: ReaderModel, f: Frame) {
             list.forEachIndexed { i, r ->
                 PopupRow(th, 66, i == sel, reqs[i], onClick = { m.rec.setReciter(r); m.closePopup() }) {
                     Box(Modifier.size(44.dp).clip(CircleShape).background(if (i == sel) th.monoBg else th.line), contentAlignment = Alignment.Center) {
-                        T(r.mono, if (th.deco == Deco.GOLD) Fonts.Cormorant else th.ui, if (th.deco == Deco.GOLD) 19 else 16, if (i == sel) th.monoFg else th.arAccent, weight = if (th.deco == Deco.GOLD) 700 else 600)
+                        T(r.mono, if (th.deco == Deco.GOLD) Fonts.Lora else th.ui, if (th.deco == Deco.GOLD) 17 else 16, if (i == sel) th.monoFg else th.arAccent, weight = if (th.deco == Deco.GOLD) 700 else 600)
                     }
                     Column(Modifier.weight(1f)) {
-                        if (th.deco == Deco.GOLD) T(r.en, Fonts.Cormorant, 22, th.text, weight = 700) else T(r.en, th.ui, 19, th.text, weight = 500)
+                        if (th.deco == Deco.GOLD) T(r.en, Fonts.Lora, 20, th.text, weight = 700) else T(r.en, th.ui, 19, th.text, weight = 500)
                         T(r.style, th.ui, 14, th.muted)
                     }
                     Ar(r.ar, th.arUi, if (th.deco == Deco.GOLD) 22 else 20, th.arAccent, weight = if (th.deco == Deco.AMBER) 400 else th.arUiWeight)
@@ -656,7 +677,7 @@ fun ThemePopup(m: ReaderModel, f: Frame) {
                         }
                     }
                     Column(Modifier.weight(1f)) {
-                        if (th.deco == Deco.GOLD) T(t.name, Fonts.Cormorant, 22, th.text, weight = 700) else T(t.name, th.ui, 19, th.text, weight = 500)
+                        if (th.deco == Deco.GOLD) T(t.name, Fonts.Lora, 20, th.text, weight = 700) else T(t.name, th.ui, 19, th.text, weight = 500)
                         T("${if (t.dark) "Dark" else "Light"} · ${QURAN_FONTS[t.pairedFont].name}", th.ui, 14, th.muted)
                     }
                 }
@@ -682,7 +703,7 @@ fun VerseOptions(m: ReaderModel, f: Frame) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                if (th.deco == Deco.GOLD) T("${Quran.nameEn(r.surah)} · Verse ${r.ayah}", Fonts.Cormorant, 26, th.text, Modifier.weight(1f), weight = 600)
+                if (th.deco == Deco.GOLD) T("${Quran.nameEn(r.surah)} · Verse ${r.ayah}", Fonts.Lora, 23, th.text, Modifier.weight(1f), weight = 600)
                 else T("${Quran.nameEn(r.surah)} · Verse ${r.ayah}", th.ui, 26, th.text, Modifier.weight(1f), weight = 600)
                 T("◀ ▶ choose · OK select · Back close", th.ui, 15, th.muted)
             }

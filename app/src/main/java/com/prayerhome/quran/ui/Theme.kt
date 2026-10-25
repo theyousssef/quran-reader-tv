@@ -11,10 +11,15 @@ object Fonts {
     private fun w(n: Int) = FontWeight(n)
     val Outfit = FontFamily(Font(R.font.outfit_400, w(400)), Font(R.font.outfit_500, w(500)), Font(R.font.outfit_600, w(600)))
     val Literata = FontFamily(Font(R.font.literata_400, w(400)), Font(R.font.literata_500, w(500)), Font(R.font.literata_600, w(600)))
-    val Figtree = FontFamily(Font(R.font.figtree_400, w(400)), Font(R.font.figtree_500, w(500)), Font(R.font.figtree_600, w(600)))
-    val Cormorant = FontFamily(
-        Font(R.font.cormorant_600, w(600)), Font(R.font.cormorant_700, w(700)),
-        Font(R.font.cormorant_500_italic, w(500), FontStyle.Italic),
+    /**
+     * Gold Leaf's sans, set one step heavier than asked for (400 draws the 500 face, and so on): dark text on
+     * the light parchment washes out at the regular weights on a TV.
+     */
+    val Figtree = FontFamily(Font(R.font.figtree_500, w(400)), Font(R.font.figtree_600, w(500)), Font(R.font.figtree_700, w(600)))
+    /** Gold Leaf's serif: moderate stroke contrast, so its thin strokes stay solid at TV distance. */
+    val Lora = FontFamily(
+        Font(R.font.lora_500, w(500)), Font(R.font.lora_600, w(600)), Font(R.font.lora_700, w(700)),
+        Font(R.font.lora_500_italic, w(500), FontStyle.Italic), Font(R.font.lora_600_italic, w(600), FontStyle.Italic),
     )
     val ReemKufi = FontFamily(Font(R.font.reemkufi_400, w(400)), Font(R.font.reemkufi_500, w(500)))
     val ElMessiri = FontFamily(Font(R.font.elmessiri_500, w(500)), Font(R.font.elmessiri_600, w(600)))
@@ -117,7 +122,7 @@ val THEMES = listOf(
         playerBg = c(0xDCCFB2), scrim = Color(228, 217, 193, 204), badgeStroke = c(0xB39C6A), badgeText = c(0x7A5A17),
         track = c(0xCDBC95), fill = c(0x9C772C), knob = c(0x7A5A17), iconOnCard = c(0x7A5A17),
         monoBg = c(0x8A6620), monoFg = c(0xF6EEDC),
-        ui = Fonts.Figtree, display = Fonts.Cormorant, displayWeight = 700, arUi = Fonts.ArefRuqaa, arUiWeight = 700,
+        ui = Fonts.Figtree, display = Fonts.Lora, displayWeight = 600, arUi = Fonts.ArefRuqaa, arUiWeight = 700,
         sideW = 480, railW = 100, colW = 1120, topPad = 30, gap = 14, toolRadius = 999, markerSize = 48,
     ),
 )

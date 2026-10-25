@@ -135,6 +135,9 @@ private fun ReadingColumn(m: ReaderModel, f: Frame, focusable: Boolean) {
     val h = f.readBottom - f.readTop
     // One line at the largest size: the list reaches this far below the visible column (clipped).
     val extra = 200
+    // The clip reaches this far beyond the text on both sides, so the highlights' outsets and borders
+    // (up to ~11px past the glyphs) aren't cut off where a line starts (right) or ends (left).
+    val bleed = 18
     val measurer = rememberTextMeasurer(cacheSize = 24)
     m.measurer = measurer
     m.fontResolver = LocalFontFamilyResolver.current
@@ -156,8 +159,8 @@ private fun ReadingColumn(m: ReaderModel, f: Frame, focusable: Boolean) {
 
     Box(
         Modifier
-            .offset(f.colX.dp, f.readTop.dp)
-            .size(f.colW.dp, h.dp)
+            .offset((f.colX - bleed).dp, f.readTop.dp)
+            .size((f.colW + 2 * bleed).dp, h.dp)
             .clipToBounds()
             .focusRequester(m.textFocus)
             .focusProperties { canFocus = focusable }
@@ -171,7 +174,7 @@ private fun ReadingColumn(m: ReaderModel, f: Frame, focusable: Boolean) {
             state = m.list,
             userScrollEnabled = false,
             modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).height((h + extra).dp),
-            contentPadding = PaddingValues(top = 60.dp, bottom = (h * 0.55f + extra).dp),
+            contentPadding = PaddingValues(start = bleed.dp, end = bleed.dp, top = 60.dp, bottom = (h * 0.55f + extra).dp),
         ) {
             items(m.items.size, key = { it }, contentType = { if (m.items[it] is Item.Header) 0 else 1 }) { i ->
                 when (val item = m.items[i]) {
@@ -316,7 +319,7 @@ private fun SurahHeader(m: ReaderModel, s: Int) {
                     Box(Modifier.weight(1f).height(1.dp).background(th.gold))
                 }
                 Ar("سورة " + Quran.nameAr(s), Fonts.ArefRuqaa, 54, th.arAccent, weight = 700, lineHeight = 1.55f)
-                T("$meta · $n verses", Fonts.Cormorant, 22, th.muted, weight = 500, italic = true)
+                T("$meta · $n verses", Fonts.Lora, 20, th.muted, weight = 500, italic = true)
             }
         }
         if (Quran.hasBasmalaHeader(s)) {

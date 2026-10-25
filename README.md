@@ -17,7 +17,9 @@ driven entirely by the TV remote.
   theme pairs with a Quran face, and you can change the face separately.
 - **Four Quran fonts**: Scheherazade New, Amiri Quran, Harmattan and Lateef. The text size can go
   from 36 to 84 px with A− / A+.
-- **Left menu** with Surah and Juz tabs, plus *Continue from bookmark*.
+- **Left menu** with Surah and Juz tabs, plus *Continue from bookmark*. Opening a juz goes to its
+  first verse and lights it up for a few seconds, the same way the bookmark does. Each juz is labelled
+  with the first words of the verse it starts at.
 - **One bookmark**, always set (Al-Fatiha 1 until you move it). *Continue from bookmark* goes to it
   and lights it up for a few seconds. *Bookmark verse* moves it; there is no "remove".
 - **Recitation verse by verse** from ten reciters on everyayah.com. The next verse starts with no
@@ -44,6 +46,7 @@ driven entirely by the TV remote.
 | | OK | options: **Recite from here** · **Bookmark verse** (moves the bookmark) |
 | | Back | remove the mark |
 | Menu | ▲ / ▼, OK | choose and open (*Continue from bookmark* is at the top) |
+| | ◀ in the list | jump to *Continue from bookmark* (◀ again on it goes back from Juz to Surah) |
 | | ▶ | Surah → Juz → close |
 | | Back | close |
 | Toolbar | ◀ / ▶, OK | choose; ◀ on *Quran font* and ▼ go back to the text; Back goes to the text |
@@ -94,10 +97,16 @@ reciting: then it holds back the Home key and asks the reader to show the questi
 playing* it watches which app is in front, until the recitation pauses or you return to the reader.
 The rest of the time it doesn't touch the remote at all. It doesn't read or store what's on screen.
 
-One side effect: while it holds the Home key (reader open and reciting), **holding a volume key
-changes the volume by one step only**; press repeatedly instead. Everywhere else, and whenever the
-recitation is paused, holding volume works as usual. The TV does this to any accessibility service that
-filters remote keys.
+**Volume.** While a service holds back remote keys, the TV stops repeating a held key, so holding
+volume would move it only one step. To avoid that, the service steps aside whenever the volume
+changes: for 2 seconds after the last change it holds back no keys at all, so holding a volume key
+keeps going as usual. Once the volume has been left alone for 2 seconds, Home asks again. Pressing
+Home within those 2 seconds just leaves (and pauses, as it does without the service).
+
+The first step of a hold is never lost, but it is the step that makes the service step aside. On a
+remote that repeats a held key by itself the hold then carries on normally. On one that leaves the
+repeating to the TV, the first hold moves one step only; let go and hold again within 2 seconds and
+it keeps going.
 
 **Without the service** (not turned on, or installed with plain `adb install`): Back still asks.
 Home can't be caught, so leaving with Home while reciting pauses. After *Keep playing* on Back, the
@@ -192,4 +201,4 @@ uses. Each family's licence is in `licenses/fonts/`.
 | Quran text | Scheherazade New, Amiri Quran, Harmattan, Lateef |
 | Night Amber UI | Outfit, Reem Kufi |
 | Midnight Indigo UI | Literata, El Messiri |
-| Gold Leaf UI | Figtree, Cormorant Garamond, Aref Ruqaa |
+| Gold Leaf UI | Figtree, Lora, Aref Ruqaa |

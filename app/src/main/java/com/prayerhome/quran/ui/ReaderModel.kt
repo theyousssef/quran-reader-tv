@@ -160,7 +160,7 @@ class ReaderModel(val app: App, val quran: Quran, private val scope: CoroutineSc
     var toast by mutableStateOf<String?>(null)
         private set
     private var toastJob: Job? = null
-    /** Verse lit up by "Continue from bookmark" ([bookmarkGlow] fades it out); not the mark. */
+    /** Verse lit up by "Continue from bookmark" or a juz ([bookmarkGlow] fades it out); not the mark. */
     var glowVerse by mutableIntStateOf(-1)
         private set
     val bookmarkGlow = Animatable(0f)
@@ -561,8 +561,13 @@ class ReaderModel(val app: App, val quran: Quran, private val scope: CoroutineSc
     }
 
     /** "Continue from bookmark": go to the bookmarked verse and light it up for a moment. */
-    fun openBookmark() {
-        val v = bookmark
+    fun openBookmark() = openLit(bookmark)
+
+    /** A juz from the menu: go to its first verse and light it up, as the bookmark does. */
+    fun openJuz(juz: Int) = openLit(Quran.juzStart(juz).index)
+
+    /** Open a verse and light it up for a few seconds (moving a recitation there too, as [open] does). */
+    private fun openLit(v: Int) {
         open(v)
         glowVerse = v
         glowJob?.cancel()

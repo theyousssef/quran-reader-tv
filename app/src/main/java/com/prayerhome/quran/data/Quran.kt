@@ -83,10 +83,16 @@ class Quran private constructor(private val verses: Array<String>) {
         private val arabicDigits = charArrayOf('٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩')
         fun arabicNumber(n: Int): String = n.toString().map { arabicDigits[it - '0'] }.joinToString("")
 
+        /**
+         * Each juz's label: the opening words of the verse it starts at in [Meta.juzStart] (the Madani mushaf
+         * division), without tashkeel. Where the traditional names come from a slightly different division
+         * (e.g. "وما لي", 36:22) they would name a verse other than the one the juz opens, so these follow the
+         * start verse instead. Juz 1 opens with Al-Fatiha 1, the basmala.
+         */
         val juzNames = arrayOf(
-            "الم", "سيقول", "تلك الرسل", "لن تنالوا", "والمحصنات", "لا يحب الله", "وإذا سمعوا", "ولو أننا",
-            "قال الملأ", "واعلموا", "يعتذرون", "وما من دابة", "وما أبرئ", "ربما", "سبحان الذي", "قال ألم",
-            "اقترب", "قد أفلح", "وقال الذين", "أمن خلق", "اتل ما أوحي", "ومن يقنت", "وما لي", "فمن أظلم",
+            "بسم الله", "سيقول", "تلك الرسل", "كل الطعام", "والمحصنات", "لا يحب الله", "لتجدن أشد", "ولو أننا",
+            "قال الملأ", "واعلموا", "إنما السبيل", "وما من دابة", "وما أبرئ", "الر", "سبحان الذي", "قال ألم",
+            "اقترب", "قد أفلح", "وقال الذين", "فما كان جواب", "ولا تجادلوا", "ومن يقنت", "وما أنزلنا", "فمن أظلم",
             "إليه يرد", "حم", "قال فما خطبكم", "قد سمع الله", "تبارك الذي", "عم",
         )
     }
