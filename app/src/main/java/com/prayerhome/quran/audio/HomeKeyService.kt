@@ -2,6 +2,11 @@ package com.prayerhome.quran.audio
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -23,6 +28,11 @@ import kotlinx.coroutines.launch
  *
  * The rest of the time it asks for nothing: key filtering and window events are switched on with
  * [setServiceInfo] only while needed, so the remote is untouched otherwise.
+ *
+ * Volume keys never reach [onKeyEvent], but while any service filters keys the system stops repeating
+ * them, so a held volume key moves one step only. So whenever the volume changes, key filtering is
+ * switched off for [VOLUME_PAUSE_MS] (restarted on every further change) and then back on: holding
+ * a volume key keeps going, and Home is caught again once the volume has been left alone for a moment.
  */
 class HomeKeyService : AccessibilityService() {
     private val main = Handler(Looper.getMainLooper())
@@ -30,6 +40,10 @@ class HomeKeyService : AccessibilityService() {
     private var filtering = false
     private var watching = false
     private var homeDownConsumed = false
+    private var mode = Mode.IDLE
+    /** The volume changed less than [VOLUME_PAUSE_MS] ago: don't filter keys. */
+    private var volumePause = false
+    private var volumeReceiver: BroadcastReceiver? = null
 
     private enum class Mode { IDLE, FILTER, WATCH }
 
@@ -38,6 +52,12 @@ class HomeKeyService : AccessibilityService() {
         val rec = App.of(this).recitation
         val s = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         scope = s
+        val r = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) = onVolumeChanged()
+        }
+        val f = IntentFilter(VOLUME_CHANGED_ACTION)
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(r, f, Context.RECEIVER_EXPORTED) else registerReceiver(r, f)
+        volumeReceiver = r
         s.launch {
             combine(LeaveGuard.resumed, LeaveGuard.keepPlayingOnHome, rec.state) { resumed, keep, st ->
                 val reciting = st.active && st.playing
@@ -46,13 +66,26 @@ class HomeKeyService : AccessibilityService() {
                     !resumed && keep && reciting -> Mode.WATCH
                     else -> Mode.IDLE
                 }
-            }.distinctUntilChanged().collect { apply(it) }
+            }.distinctUntilChanged().collect { mode = it; apply() }
         }
     }
 
-    private fun apply(mode: Mode) {
+    private fun onVolumeChanged() {
+        main.removeCallbacks(volumeDone)
+        main.postDelayed(volumeDone, VOLUME_PAUSE_MS)
+        if (volumePause) return
+        volumePause = true
+        if (filtering) { Log.i(TAG, "volume changed: stop filtering keys for a moment"); apply() }
+    }
+
+    private val volumeDone = Runnable {
+        volumePause = false
+        if (mode == Mode.FILTER) { Log.i(TAG, "volume left alone: filter keys again"); apply() }
+    }
+
+    private fun apply() {
         val info = serviceInfo ?: return
-        filtering = mode == Mode.FILTER
+        filtering = mode == Mode.FILTER && !volumePause
         watching = mode == Mode.WATCH
         var flags = info.flags and (AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS).inv()
         if (filtering) flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
@@ -60,7 +93,7 @@ class HomeKeyService : AccessibilityService() {
         info.flags = flags
         info.eventTypes = if (watching) AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED else 0
         serviceInfo = info
-        Log.i(TAG, "mode $mode")
+        Log.i(TAG, "mode $mode${if (mode == Mode.FILTER && !filtering) " (paused: volume)" else ""}")
         if (watching) main.postDelayed(check, 500) // in case something else is already in front
     }
 
@@ -118,6 +151,7 @@ class HomeKeyService : AccessibilityService() {
 
     override fun onDestroy() {
         LeaveGuard.serviceConnected = false
+        volumeReceiver?.let { runCatching { unregisterReceiver(it) } }
         scope?.cancel()
         main.removeCallbacksAndMessages(null)
         super.onDestroy()
@@ -125,5 +159,8 @@ class HomeKeyService : AccessibilityService() {
 
     companion object {
         private const val TAG = "QuranReader"
+        /** AudioManager.VOLUME_CHANGED_ACTION (hidden in the SDK, sent by the system on every volume change). */
+        private const val VOLUME_CHANGED_ACTION = "android.media.VOLUME_CHANGED_ACTION"
+        private const val VOLUME_PAUSE_MS = 2000L
     }
 }
