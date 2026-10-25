@@ -46,7 +46,8 @@ driven entirely by the TV remote.
 | | OK | options: **Recite from here** · **Bookmark verse** (moves the bookmark) |
 | | Back | remove the mark |
 | Menu | ▲ / ▼, OK | choose and open (*Continue from bookmark* is at the top) |
-| | ◀ in the list | jump to *Continue from bookmark* (◀ again on it goes back from Juz to Surah) |
+| | ◀ | in the Surah list: jump to *Continue from bookmark*; in the Juz list (or on the card while on Juz): back to the Surah tab, landing in its list |
+| | ▶ on *Continue from bookmark* | back to the list |
 | | ▶ | Surah → Juz → close |
 | | Back | close |
 | Toolbar | ◀ / ▶, OK | choose; ◀ on *Quran font* and ▼ go back to the text; Back goes to the text |

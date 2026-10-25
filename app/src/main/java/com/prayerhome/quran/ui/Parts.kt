@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -38,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
@@ -55,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import com.prayerhome.quran.audio.PlaybackService
 import com.prayerhome.quran.audio.Reciters
 import com.prayerhome.quran.data.Quran
+import kotlinx.coroutines.launch
 
 private suspend fun frames(n: Int) = repeat(n) { withFrameNanos { } }
 
@@ -77,11 +80,16 @@ fun SidePanel(m: ReaderModel, f: Frame) {
     val th = m.theme
     val continueReq = remember { FocusRequester() }
     // An invisible stop that holds focus while a tab's list is being replaced, so focus never lands on
-    // (and flashes) the bookmark card on the way from one list to the next.
+    // (and flashes) the bookmark card on the way from one list to the next. It can only take focus while
+    // parking (parked[0]); otherwise ▲ / ▼ would step onto it and focus would vanish.
     val holder = remember { FocusRequester() }
+    val parked = remember { booleanArrayOf(true) }
     val onCard = remember { booleanArrayOf(false) }
+    // Set by the current list: moves focus back to the row last focused in it.
+    val toList = remember { arrayOfNulls<() -> Unit>(1) }
     LaunchedEffect(Unit) { runCatching { holder.requestFocus() } }
     fun switchTab(t: Int) {
+        parked[0] = true
         runCatching { holder.requestFocus() }
         m.tab = t
     }
@@ -94,11 +102,18 @@ fun SidePanel(m: ReaderModel, f: Frame) {
             .padding(start = pad[1].dp, end = pad[1].dp, top = pad[0].dp, bottom = pad[2].dp)
             .keys { code ->
                 when (code) {
-                    KeyEvent.KEYCODE_DPAD_RIGHT -> { if (m.tab < TAB_NAMES.size - 1) switchTab(m.tab + 1) else m.closeMenu(); true }
-                    // In a list, ◀ goes straight to "Continue from bookmark"; on it, ◀ goes back a tab.
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        // On the card, ▶ goes back down into the list; in a list, Surah → Juz → close.
+                        if (onCard[0]) toList[0]?.invoke()
+                        else if (m.tab < TAB_NAMES.size - 1) switchTab(m.tab + 1)
+                        else m.closeMenu()
+                        true
+                    }
+                    // ◀ in the Surah list goes to "Continue from bookmark"; in the Juz list (or on the card while
+                    // on Juz) it goes back to the Surah tab, without passing the card.
                     KeyEvent.KEYCODE_DPAD_LEFT -> {
-                        if (!onCard[0]) runCatching { continueReq.requestFocus() }
-                        else if (m.tab > 0) switchTab(m.tab - 1)
+                        if (m.tab > 0) switchTab(m.tab - 1)
+                        else if (!onCard[0]) runCatching { continueReq.requestFocus() }
                         true
                     }
                     -KeyEvent.KEYCODE_DPAD_RIGHT, -KeyEvent.KEYCODE_DPAD_LEFT -> true
@@ -111,9 +126,14 @@ fun SidePanel(m: ReaderModel, f: Frame) {
         ContinueCard(m, continueReq, Modifier.onFocusChanged { onCard[0] = it.hasFocus })
         Box {
             Tabs(th, m.tab)
-            Box(Modifier.size(1.dp).focusRequester(holder).focusable())
+            Box(
+                Modifier.size(1.dp)
+                    .onFocusChanged { if (!it.isFocused) parked[0] = false }
+                    .focusProperties { canFocus = parked[0] }
+                    .focusRequester(holder).focusable(),
+            )
         }
-        key(m.tab) { MenuList(m, continueReq) }
+        key(m.tab) { MenuList(m, continueReq, toList) }
         T("▲▼ choose · OK open · ▶ next tab · Back close", th.ui, if (th.deco == Deco.GOLD) 15 else 16, th.muted)
     }
 }
@@ -220,13 +240,25 @@ private fun Tabs(th: QTheme, tab: Int) {
 }
 
 @Composable
-private fun ColumnScope.MenuList(m: ReaderModel, continueReq: FocusRequester) {
+private fun ColumnScope.MenuList(m: ReaderModel, continueReq: FocusRequester, toList: Array<(() -> Unit)?>) {
     val th = m.theme
     val state = rememberLazyListState()
     val reqs = remember { HashMap<Int, FocusRequester>() }
     val tab = m.tab
     val count = if (tab == 0) 114 else 30
     val target = if (tab == 0) m.currentSurah - 1 else Quran.juzOf(m.progressVerse) - 1
+    val last = remember { intArrayOf(target) }
+    val scope = rememberCoroutineScope()
+    toList[0] = {
+        val r = reqs[last[0]]
+        if (r != null) runCatching { r.requestFocus() }
+        else scope.launch {
+            state.scrollToItem((last[0] - 3).coerceAtLeast(0))
+            var n = 0
+            while (reqs[last[0]] == null && n++ < 10) frames(1)
+            reqs[last[0]]?.let { runCatching { it.requestFocus() } }
+        }
+    }
     LaunchedEffect(Unit) {
         if (count > 0) state.scrollToItem((target - 3).coerceAtLeast(0))
         frames(2)
@@ -241,7 +273,7 @@ private fun ColumnScope.MenuList(m: ReaderModel, continueReq: FocusRequester) {
             when (tab) {
                 0 -> {
                     val s = i + 1
-                    MenuRow(th, s, "$s", Quran.nameEn(s), "${Quran.ayahs(s)} verses · ${if (Quran.meccan(s)) "Meccan" else "Medinan"}", Quran.nameAr(s), s == m.currentSurah, fr) {
+                    MenuRow(th, s, "$s", Quran.nameEn(s), "${Quran.ayahs(s)} verses · ${if (Quran.meccan(s)) "Meccan" else "Medinan"}", Quran.nameAr(s), s == m.currentSurah, fr, Modifier.onFocusChanged { if (it.isFocused) last[0] = i }) {
                         m.open(Quran.surahStart(s))
                     }
                 }
@@ -249,7 +281,7 @@ private fun ColumnScope.MenuList(m: ReaderModel, continueReq: FocusRequester) {
                     val j = i + 1
                     val st = Quran.juzStart(j)
                     val idx = st.index
-                    MenuRow(th, j, "$j", "Juz $j", "${Quran.nameEn(st.surah)} ${st.ayah} · page ${Quran.pageOf(idx)}", Quran.juzNames[i], j == Quran.juzOf(m.progressVerse), fr) {
+                    MenuRow(th, j, "$j", "Juz $j", "${Quran.nameEn(st.surah)} ${st.ayah} · page ${Quran.pageOf(idx)}", Quran.juzNames[i], j == Quran.juzOf(m.progressVerse), fr, Modifier.onFocusChanged { if (it.isFocused) last[0] = i }) {
                         m.openJuz(j)
                     }
                 }
@@ -259,8 +291,8 @@ private fun ColumnScope.MenuList(m: ReaderModel, continueReq: FocusRequester) {
 }
 
 @Composable
-private fun MenuRow(th: QTheme, n: Int, num: String, title: String, meta: String, arabic: String, current: Boolean, fr: FocusRequester, onClick: () -> Unit) {
-    Focusable(onClick = onClick, focusRequester = fr) { focused ->
+private fun MenuRow(th: QTheme, n: Int, num: String, title: String, meta: String, arabic: String, current: Boolean, fr: FocusRequester, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Focusable(modifier, onClick = onClick, focusRequester = fr) { focused ->
         val r = when (th.deco) { Deco.AMBER, Deco.INDIGO -> 14; Deco.GOLD -> 16 }
         val shape = RoundedCornerShape(r.dp)
         val h = when (th.deco) { Deco.AMBER -> 70; Deco.INDIGO -> 66; Deco.GOLD -> 68 }
