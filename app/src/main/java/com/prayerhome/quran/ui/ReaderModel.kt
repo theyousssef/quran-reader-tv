@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.sp
 import com.prayerhome.quran.App
 import com.prayerhome.quran.audio.LeaveGuard
+import com.prayerhome.quran.audio.Recitation
 import com.prayerhome.quran.data.Quran
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -42,8 +43,14 @@ import kotlin.math.floor
 import kotlin.math.exp
 import kotlin.math.roundToInt
 
-/** Logs the follow loop's clock and scroll position every frame (tag QRFollow). */
-private const val DEBUG_FOLLOW = false
+/**
+ * Logs the follow loop's clock, scroll and sub-pixel offset every frame (tag QRFollow). Off unless turned on
+ * on the device with `adb shell setprop log.tag.QRFollow DEBUG` (read when a recitation starts).
+ */
+/** Time constant of the follow glide, ms: how softly the page takes up a change in the recited point. */
+private const val FOLLOW_MS = 140f
+
+private fun debugFollow() = Log.isLoggable("QRFollow", Log.DEBUG)
 
 /** The reading column is a list of surah headers and page-sized blocks of flowing verses. */
 sealed class Item(val surah: Int) {
@@ -143,8 +150,9 @@ class ReaderModel(val app: App, val quran: Quran, private val scope: CoroutineSc
     fun setFont(i: Int) { fontIndex = i; prefs.font = i }
     fun textSmaller() = changeSize(-4)
     fun textLarger() = changeSize(+4)
-    private fun changeSize(d: Int) {
-        val target = (size + d).coerceIn(36, 84)
+    private fun changeSize(d: Int) = setSize(size + d)
+    fun setSize(px: Int) {
+        val target = px.coerceIn(36, 84)
         sizeDelta = target - font.size; prefs.sizeDelta = sizeDelta
     }
 
@@ -193,6 +201,13 @@ class ReaderModel(val app: App, val quran: Quran, private val scope: CoroutineSc
         private set
     /** How far the current clip has played, 0..1, updated every frame (read it only in draw/layout lambdas). */
     val clipProgress = mutableFloatStateOf(0f)
+    /**
+     * How far (0 until 1 px) the page is drawn above the list's whole-pixel scroll position while it follows a
+     * recitation. The list itself only ever scrolls by whole pixels; this remainder is a translation of the
+     * column's offscreen layer, which the GPU filters, so the text glides by fractions of a pixel. It is 0
+     * whenever the page rests, so the text is then pixel-crisp. Read it only in the layer lambda.
+     */
+    val subPx = mutableFloatStateOf(0f)
     /** The recited surah's progress for the rail, 0..1, set in the same frame as [clipProgress] (draw/layout only). */
     val surahProgress = mutableFloatStateOf(0f)
     var clipSecond by mutableIntStateOf(0)
@@ -449,13 +464,16 @@ class ReaderModel(val app: App, val quran: Quran, private val scope: CoroutineSc
      * Follows the recitation: estimates the clip's position and scrolls so that the point of the text being
      * recited — moving through the verse's lines in step with the audio — sits on the reading line.
      *
+     * - Time is the frame's vsync time (withFrameNanos), so the motion per frame matches what is shown.
      * - The clock never runs backwards within a clip: it advances by frame time at a rate nudged toward the
-     *   MediaPlayer position (read 5× a second), so read jitter is absorbed gradually instead of by jumps.
+     *   MediaPlayer position (read 5× a second off the UI thread, see [Recitation.requestSample]), so read
+     *   jitter is absorbed gradually instead of by jumps.
      *   Only a repeat (the clip starting over) or a new verse resets it.
-     * - The list is scrolled by whole pixels only (see [track]).
+     * - The page moves by fractions of a pixel (see [track]).
      * - Paused, or waiting for the next verse's audio, it requests no frames once the page is at rest.
      */
     suspend fun follow() {
+        val debug = debugFollow()
         var clip = Int.MIN_VALUE
         var clock = 0f
         var dur = 0
@@ -463,76 +481,141 @@ class ReaderModel(val app: App, val quran: Quran, private val scope: CoroutineSc
         var readPos = 0f
         var lastRaw = -1f
         var last = 0L
-        while (true) {
-            val now = withFrameNanos { it }
-            val s = rec.state.value
-            if (!s.active) break
-            val key = if (s.basmala) -s.surah else Quran.indexOf(s.surah, s.ayah)
-            if (key != clip) { clip = key; clock = 0f; dur = 0; readAt = 0L; lastRaw = -1f; userScrolled = false; scrollAcc = 0f }
-            val running = s.playing && !s.buffering
-            val dt = if (last == 0L) 0f else ((now - last) / 1e6f).coerceIn(0f, 100f)
-            last = now
-            if (running) {
-                if (readAt == 0L || now - readAt > 200_000_000L) {
-                    val raw = rec.positionMs().toFloat()
-                    dur = rec.durationMs()
-                    if (lastRaw >= 0f && raw < lastRaw - 500f) clock = raw   // repeat: the clip started over
-                    lastRaw = raw; readPos = raw; readAt = now
+        var askedAt = 0L
+        var runSince = 0L
+        var seen: Recitation.Sample? = null
+        // MP3 durations are estimates: a clip often ends at 89–93% of the reported duration, so the point
+        // used to jump the unrecited rest at every hand-over. The share reached at the end of the last few
+        // clips is learned and the progress stretched by it.
+        var endShare = 1f
+        var lastShare = 0f
+        var lastRunning = false
+        try {
+            while (true) {
+                val now = withFrameNanos { it }
+                val s = rec.state.value
+                if (!s.active) break
+                val key = if (s.basmala) -s.surah else Quran.indexOf(s.surah, s.ayah)
+                if (key != clip) {
+                    // The clip before played to its end (not a jump): learn how far the estimate got.
+                    if (lastRunning && lastShare > 0.75f && (key == clip + 1 || clip < 0 && key == Quran.surahStart(-clip))) {
+                        endShare = (0.5f * endShare + 0.5f * lastShare).coerceIn(0.8f, 1f)
+                    }
+                    clip = key; clock = 0f; dur = 0; readAt = 0L; lastRaw = -1f; userScrolled = false; askedAt = 0L
                 }
-                val err = readPos + (now - readAt) / 1e6f - clock
-                clock += if (err > 1500f) err else dt * (1f + err / 300f).coerceIn(0f, 2f)
-            } else if (dur == 0) dur = rec.durationMs()
-            clock = clock.coerceIn(0f, dur.toFloat().coerceAtLeast(0f))
-            val p = if (dur > 0) clock / dur else 0f
-            clipProgress.floatValue = p
-            surahProgress.floatValue = if (s.basmala) 0f else ((s.ayah - 1 + p) / Quran.ayahs(s.surah)).coerceIn(0f, 1f)
-            clipSecond = (clock / 1000f).toInt()
-            clipSeconds = dur / 1000
-            val still = userScrolled || measurer == null || track(s.surah, s.basmala, key, p, dt)
-            if (DEBUG_FOLLOW) Log.d("QRFollow", "t=${now / 1_000_000} run=$running clock=$clock p=$p item=${list.firstVisibleItemIndex} off=${list.firstVisibleItemScrollOffset}")
-            if (!running && still) {
-                // At rest and nothing playing: no frames until the recitation changes; a slow check re-settles
-                // the page if its layout moved (e.g. the text size changed).
-                last = 0L
-                withTimeoutOrNull(400) { rec.state.first { it != s } }
+                val running = s.playing && !s.buffering
+                val dt = if (last == 0L) 0f else ((now - last) / 1e6f).coerceIn(0f, 100f)
+                last = now
+                // A reading taken before the clip (re)started running says nothing about where it is now.
+                if (!running) { runSince = 0L; readAt = 0L } else if (runSince == 0L) { runSince = now; askedAt = 0L }
+                // The player is read off the UI thread 5× a second; take a reading once it's in, if it's this clip's.
+                if ((running || dur == 0) && (askedAt == 0L || now - askedAt > 200_000_000L)) { askedAt = now; rec.requestSample() }
+                val r = rec.sample
+                if (r != null && r !== seen && r.surah == s.surah && r.ayah == s.ayah && r.basmala == s.basmala) {
+                    seen = r
+                    if (r.durMs > 0) dur = r.durMs
+                    if (running && r.atNanos > runSince) {
+                        val raw = r.posMs.toFloat()
+                        if (lastRaw >= 0f && raw < lastRaw - 500f) clock = raw   // repeat: the clip started over
+                        lastRaw = raw; readPos = raw; readAt = r.atNanos
+                    }
+                }
+                if (running) {
+                    if (readAt == 0L) clock += dt   // no reading yet: assume it plays on at normal speed
+                    else {
+                        val err = readPos + (now - readAt) / 1e6f - clock
+                        clock += if (err > 1500f) err else dt * (1f + err / 300f).coerceIn(0f, 2f)
+                    }
+                }
+                clock = clock.coerceIn(0f, dur.toFloat().coerceAtLeast(0f))
+                val p = if (dur > 0) (clock / (dur * endShare)).coerceAtMost(1f) else 0f
+                lastShare = if (dur > 0) clock / dur else 0f; lastRunning = running
+                clipProgress.floatValue = p
+                surahProgress.floatValue = if (s.basmala) 0f else ((s.ayah - 1 + p) / Quran.ayahs(s.surah)).coerceIn(0f, 1f)
+                clipSecond = (clock / 1000f).toInt()
+                clipSeconds = dur / 1000
+                // The user scrolled away: their scroll animation is moving the page, drop the remainder with it.
+                if (userScrolled) dropRemainder()
+                val before = subPx.floatValue
+                moved = 0f
+                val still = userScrolled || measurer == null || track(s.surah, s.basmala, key, p, dt, running)
+                if (debug) Log.d("QRFollow", "t=${now / 1000} run=$running clock=$clock p=$p item=${list.firstVisibleItemIndex} off=${list.firstVisibleItemScrollOffset} n=$moved frac=${subPx.floatValue} dv=${moved + subPx.floatValue - before}")
+                if (!running && still) {
+                    // At rest and nothing playing: no frames until the recitation changes; a slow check re-settles
+                    // the page if its layout moved (e.g. the text size changed).
+                    last = 0L
+                    withTimeoutOrNull(400) { rec.state.first { it != s } }
+                }
             }
+        } finally {
+            // Recitation over: put the page back on whole pixels (the nearer one; the list doesn't move on its own).
+            if (subPx.floatValue >= 0.5f) list.dispatchRawDelta(1f)
+            dropRemainder()
+            clipProgress.floatValue = 0f
+            surahProgress.floatValue = 0f
         }
-        clipProgress.floatValue = 0f
-        surahProgress.floatValue = 0f
     }
 
-    /** Sub-pixel part of the scroll still owed (always less than a pixel). */
-    private var scrollAcc = 0f
+    /** Whole pixels the list was scrolled in the last [track] call (for the debug log). */
+    private var moved = 0f
+    /** The page's speed while following, px/ms (positive = text moving up). */
+    private var vel = 0f
+
+    private fun dropRemainder() { subPx.floatValue = 0f; vel = 0f }
 
     /**
-     * Glides the recited point toward the reading line, in whole pixels only: the point is brought to rest
-     * 0..1 px below the line (the target is floored), never past it. Fractional deltas used to be rounded
-     * by the list, so a target between two pixels made the page flip between them every frame (the shiver
-     * on slow, short verses and while paused). Returns true when there's nothing to move.
+     * Glides the recited point toward the reading line by fractions of a pixel: the list scrolls by whole
+     * pixels and [subPx] carries the remainder, drawn as a filtered translation of the column's layer.
+     *
+     * The page follows its target like a critically damped spring, so its speed changes smoothly: small
+     * steps in the target (a verse hand-over, a line's unused width) become short eased glides instead of
+     * a jolt, and it never overshoots. While the recitation plays the target is the exact point; when it
+     * stops (paused, buffering, waiting for the next clip) the page settles forward onto the next whole
+     * pixel, so the text rests crisp and never steps back a fraction. The page never moves away from its
+     * target, and a small target behind it (under 2 px, e.g. after resting on the pixel ahead) is held, so
+     * within a verse it never moves backwards. Returns true when the page is at rest on a whole pixel.
      */
-    private fun track(surah: Int, basmala: Boolean, v: Int, p: Float, dt: Float): Boolean {
+    private fun track(surah: Int, basmala: Boolean, v: Int, p: Float, dt: Float, running: Boolean): Boolean {
         val vis = list.layoutInfo.visibleItemsInfo
         val y: Float = if (basmala) {
             val hi = headerOf[surah]
-            val it = vis.firstOrNull { it.index == hi } ?: run { list.requestScrollToItem(hi); return false }
+            val it = vis.firstOrNull { it.index == hi } ?: run { dropRemainder(); list.requestScrollToItem(hi); return false }
             val basH = size * 0.92f * 2f * pxPerDp
             it.offset + it.size - basH * (1f - p)
         } else {
             val bi = blockOf[v]
-            val it = vis.firstOrNull { it.index == bi } ?: run { list.requestScrollToItem(bi); return false }
+            val it = vis.firstOrNull { it.index == bi } ?: run { dropRemainder(); list.requestScrollToItem(bi); return false }
             it.offset + pointInVerse(bi, v, p)
         }
         val vh = visH
-        val e = y - vh * 0.36f
-        val goal = floor(e)
-        if (goal == 0f) { scrollAcc = 0f; return true }
-        if (abs(e) > vh * 2.5f) { scrollAcc = 0f; return list.dispatchRawDelta(goal) == 0f }
-        if (scrollAcc * goal < 0f) scrollAcc = 0f
-        scrollAcc += e * (1f - exp(-dt / 110f))
-        val n = if (goal > 0f) floor(scrollAcc).coerceIn(0f, goal) else ceil(scrollAcc).coerceIn(goal, 0f)
-        scrollAcc = (scrollAcc - n).coerceIn(-1f, 1f)
-        // At the end of the list nothing can move: count that as at rest.
-        return n != 0f && list.dispatchRawDelta(n) == 0f
+        val frac = subPx.floatValue
+        // Where the page should be, relative to the list's whole-pixel position (frac is where it is).
+        val want = y - vh * 0.36f
+        if (abs(want - frac) > vh * 2.5f) {
+            dropRemainder()
+            moved = list.dispatchRawDelta(want.roundToInt().toFloat())
+            return moved == 0f
+        }
+        var to = if (running) want else ceil(want - 0.001f)
+        if (to < frac && frac - to < 2f) { to = if (running) frac else ceil(frac - 0.001f); if (to == frac) vel = 0f }
+        // One step of the critically damped spring (exact for any dt, so a late frame lands where it should).
+        val w = 1f / FOLLOW_MS
+        val e0 = frac - to
+        val k = exp(-w * dt)
+        var pos = to + (e0 + (vel + w * e0) * dt) * k
+        vel = (vel - w * (vel + w * e0) * dt) * k
+        val dir = if (to > frac) 1f else if (to < frac) -1f else 0f
+        if ((pos - to) * dir > 0f || dir == 0f) { pos = to; vel = 0f }          // never past the target
+        if ((pos - frac) * dir < 0f) { pos = frac; vel = 0f }                    // never away from it
+        if (abs(to - pos) < 0.004f && abs(vel) < 0.0005f) { pos = to; vel = 0f }
+        val n = floor(pos)
+        if (n != 0f) {
+            moved = list.dispatchRawDelta(n)
+            // At the end of the list nothing can move: count that as at rest.
+            if (moved != n) { dropRemainder(); return true }
+        }
+        subPx.floatValue = pos - n
+        return pos == to && pos - n == 0f
     }
 
     /**

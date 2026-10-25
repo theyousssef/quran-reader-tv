@@ -74,11 +74,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** adb helpers: `am start -n com.prayerhome.quran/.MainActivity --ei theme 2 --ei font 1 --es goto 18:1`. */
+    /** adb helpers: `am start -n com.prayerhome.quran/.MainActivity --ei theme 2 --ei font 1 --ei size 72 --es goto 18:1`. */
     private fun handleExtras(intent: Intent) {
         val m = model ?: return
         if (intent.hasExtra("theme")) m.setTheme(intent.getIntExtra("theme", 0).coerceIn(0, THEMES.size - 1))
         if (intent.hasExtra("font")) m.setFont(intent.getIntExtra("font", 0).coerceIn(0, 3))
+        if (intent.hasExtra("size")) m.setSize(intent.getIntExtra("size", m.size))
         intent.getStringExtra("goto")?.split(':')?.let { p ->
             val s = p[0].toIntOrNull() ?: return@let
             val a = p.getOrNull(1)?.toIntOrNull() ?: 1

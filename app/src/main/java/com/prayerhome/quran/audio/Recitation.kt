@@ -183,7 +183,34 @@ class Recitation(private val ctx: Context, private val prefs: Prefs) {
     }
 
     fun positionMs(): Int = if (curPrepared) runCatching { cur!!.currentPosition }.getOrDefault(0) else 0
-    fun durationMs(): Int = if (curPrepared) runCatching { cur!!.duration }.getOrDefault(0) else 0
+
+    /** A reading of the playing clip: which verse ([surah], [ayah], [basmala]), where it was and when (System.nanoTime). */
+    class Sample(val surah: Int, val ayah: Int, val basmala: Boolean, val posMs: Int, val durMs: Int, val atNanos: Long)
+
+    /** The latest [requestSample] result, or null. */
+    @Volatile var sample: Sample? = null
+        private set
+    private val sampler = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val sampling = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Reads the clip's position and duration off the UI thread. These are calls into the media server, which
+     * blocks them while it chains the next clip (up to ~250 ms on this TV); read on the UI thread, that froze
+     * the page at every verse hand-over. The result lands in [sample]; one reading at a time.
+     */
+    fun requestSample() {
+        val mp = cur?.takeIf { curPrepared } ?: return
+        val i = curItem ?: return
+        if (!sampling.compareAndSet(false, true)) return
+        sampler.execute {
+            try {
+                val pos = mp.currentPosition
+                val at = System.nanoTime()
+                sample = Sample(i.surah, i.ayah, i.basmala, pos, mp.duration, at)
+            } catch (_: Exception) {
+            } finally { sampling.set(false) }
+        }
+    }
 
     // ------------------------------------------------------------------ queue
 
@@ -277,7 +304,19 @@ class Recitation(private val ctx: Context, private val prefs: Prefs) {
 
     // ------------------------------------------------------------------ players
 
-    private fun newPlayer(i: Item, f: File, onPrepared: (MediaPlayer) -> Unit): MediaPlayer = MediaPlayer().apply {
+    /**
+     * Slow player calls run here, in order, off the UI thread: on this TV setNextMediaPlayer can block for
+     * ~250 ms, creating a player ~20 ms and release ~10 ms, which used to stall the reader's frames at every
+     * verse hand-over. A player created there has no looper, so its callbacks still come on the main thread.
+     */
+    private val playerOps = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    /** The next verse's player is being created on [playerOps]. */
+    private var nxtPending = false
+    /** Bumped whenever the players are released, so a player created for an older queue is dropped. */
+    private var playersGen = 0
+
+    private fun newPlayer(i: Item, f: File, prepare: Boolean = true, onPrepared: (MediaPlayer) -> Unit): MediaPlayer = MediaPlayer().apply {
         setAudioAttributes(ATTRS)
         setWakeMode(ctx, PowerManager.PARTIAL_WAKE_LOCK)
         setDataSource(f.path)
@@ -294,7 +333,7 @@ class Recitation(private val ctx: Context, private val prefs: Prefs) {
             }
             false
         }
-        prepareAsync()
+        if (prepare) prepareAsync()
     }
 
     private fun tryPrepare() {
@@ -305,11 +344,26 @@ class Recitation(private val ctx: Context, private val prefs: Prefs) {
             cur = newPlayer(first, f) { mp -> onPrepared(mp) }
             return
         }
-        if (!curPrepared || nxt != null) return
+        if (!curPrepared || nxt != null || nxtPending) return
         val second = window.getOrNull(1) ?: return
         val f = ready[second.seq] ?: return
-        nxtItem = second; nxtPrepared = false
-        nxt = newPlayer(second, f) { mp -> onPrepared(mp) }
+        nxtItem = second; nxtPrepared = false; nxtPending = true
+        val gen = playersGen
+        playerOps.execute {
+            val mp = runCatching { newPlayer(second, f, prepare = false) { mp -> onPrepared(mp) } }.getOrNull()
+            main.post {
+                if (gen != playersGen) { mp?.let { playerOps.execute { it.release() } }; return@post }
+                nxtPending = false
+                if (mp == null || nxtItem !== second || cur == null) {
+                    mp?.let { playerOps.execute { it.release() } }
+                    if (nxtItem === second) nxtItem = null
+                    tryPrepare()
+                    return@post
+                }
+                nxt = mp
+                runCatching { mp.prepareAsync() }.onFailure { Log.w(TAG, "prepareAsync failed", it) }
+            }
+        }
     }
 
     private fun onPrepared(mp: MediaPlayer) {
@@ -325,7 +379,8 @@ class Recitation(private val ctx: Context, private val prefs: Prefs) {
             }
             mp === nxt -> {
                 nxtPrepared = true
-                runCatching { cur?.setNextMediaPlayer(mp) }.onFailure { Log.w(TAG, "setNextMediaPlayer failed", it) }
+                val c = cur
+                playerOps.execute { runCatching { c?.setNextMediaPlayer(mp) }.onFailure { Log.w(TAG, "setNextMediaPlayer failed", it) } }
             }
             else -> mp.release()
         }
@@ -339,8 +394,8 @@ class Recitation(private val ctx: Context, private val prefs: Prefs) {
         val nextWasChained = next != null && nxtPrepared
         val nextPlaying = nextWasChained && runCatching { next!!.isPlaying }.getOrDefault(false)
         val nextPos = if (nextPlaying) runCatching { next!!.currentPosition }.getOrDefault(-1) else -1
-        mp.release()
-        if (done != null) { ready.remove(done.seq)?.delete(); fileFor(done).delete() }
+        val doneFiles = if (done != null) listOfNotNull(ready.remove(done.seq), fileFor(done)) else emptyList()
+        playerOps.execute { runCatching { mp.release() }; doneFiles.forEach { it.delete() } }
         if (window.firstOrNull()?.seq == done?.seq) window.removeFirst()
         cur = next; curItem = nxtItem; curPrepared = nxtPrepared
         nxt = null; nxtItem = null; nxtPrepared = false
@@ -379,6 +434,7 @@ class Recitation(private val ctx: Context, private val prefs: Prefs) {
         cur?.let { runCatching { it.release() } }
         nxt?.let { runCatching { it.release() } }
         cur = null; nxt = null; curItem = null; nxtItem = null; curPrepared = false; nxtPrepared = false
+        nxtPending = false; playersGen++
     }
 
     // ------------------------------------------------------------------ audio focus

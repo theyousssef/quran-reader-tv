@@ -136,7 +136,9 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home ./gradl
 ```
 
 For testing over adb, these extras are available:
-`am start -n com.prayerhome.quran/.MainActivity --ei theme 0..2 --ei font 0..3 --es goto 18:10`.
+`am start -n com.prayerhome.quran/.MainActivity --ei theme 0..2 --ei font 0..3 --ei size 36..84 --es goto 18:10`.
+`adb shell setprop log.tag.QRFollow DEBUG` logs the recitation follow loop every frame (clock, scroll,
+sub-pixel offset); it is read when a recitation starts.
 
 ## How it's built
 
@@ -172,10 +174,18 @@ uses the platform `MediaPlayer` and `MediaSession`, so no Media3 or ExoPlayer is
   Lines are right-aligned rather than justified, because Compose doesn't report justified glyph
   positions, and the markers and highlights need those positions.
 - **Following the recitation:** a per-frame loop reads the `MediaPlayer` position five times a second
-  and moves an estimate forward with the frame clock in between. It maps the clip's progress to a
-  point in the verse's laid-out lines and scrolls the list with `dispatchRawDelta`, so that point
-  sits on a fixed reading line. The progress bars read the same value in their draw and layout
-  lambdas, so nothing recomposes per frame.
+  (on a background thread, since the media server can block that call for ~250 ms while it chains the
+  next verse) and moves an estimate forward with the vsync frame time in between. It maps the clip's
+  progress to a point in the verse's laid-out lines, and the page follows that point onto a fixed
+  reading line like a critically damped spring, so the speed never jumps.
+- **Sub-pixel scrolling:** the recitation moves the page only 10–30 px a second, a fraction of a pixel
+  per frame. The list scrolls by whole pixels (`dispatchRawDelta`) and the remaining fraction is a
+  `graphicsLayer` translation of the column, drawn as an offscreen layer while reciting. The GPU then
+  filters the layer between pixels, so the text glides instead of hopping a pixel every few frames
+  (a plain translation doesn't help, because glyphs snap to the pixel grid). Whenever the page stops,
+  it settles forward onto a whole pixel, and the layer is drawn unfiltered and stays crisp. The surah
+  rail's knob and pill move the same way. The progress bars read the same values in their draw and
+  layer lambdas, so nothing recomposes per frame.
 
 ## Sources and attribution
 

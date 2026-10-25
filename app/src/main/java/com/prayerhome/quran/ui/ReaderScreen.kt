@@ -47,6 +47,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -60,7 +61,6 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -173,7 +173,16 @@ private fun ReadingColumn(m: ReaderModel, f: Frame, focusable: Boolean) {
         LazyColumn(
             state = m.list,
             userScrollEnabled = false,
-            modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).height((h + extra).dp),
+            modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).height((h + extra).dp)
+                // Following a recitation, the list scrolls by whole pixels and the page is drawn the remaining
+                // fraction of a pixel higher. Glyphs snap to the pixel grid, so the column is rendered into an
+                // offscreen layer (the visible area only) and the GPU filters that layer at fractional offsets;
+                // at a whole-pixel offset it is drawn unfiltered, so the resting page stays crisp. Read in the
+                // layer block: a new fraction each frame changes only the layer's position, no relayout.
+                .graphicsLayer {
+                    translationY = -m.subPx.floatValue
+                    compositingStrategy = if (m.recMode) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+                },
             contentPadding = PaddingValues(start = bleed.dp, end = bleed.dp, top = 60.dp, bottom = (h * 0.55f + extra).dp),
         ) {
             items(m.items.size, key = { it }, contentType = { if (m.items[it] is Item.Header) 0 else 1 }) { i ->
@@ -372,7 +381,9 @@ private fun ProgressRail(m: ReaderModel, f: Frame) {
         Modifier.offset(x.dp, f.barTop.dp).size(6.dp, h.dp).background(th.track, RoundedCornerShape(6.dp))
             .drawBehind { drawRoundRect(th.fill, Offset.Zero, Size(size.width, size.height * frac()), CornerRadius(3 * px)) },
     )
-    val dy = Modifier.offset { IntOffset(0, (h * frac() * px).roundToInt()) }
+    // Moved by a float translation, so the knob and pill glide by fractions of a pixel; the pill is drawn
+    // offscreen and filtered as a whole, or its text would snap to whole pixels apart from its box.
+    val dy = Modifier.graphicsLayer { translationY = h * frac() * px }
     // knob with its 4px ring in the page colour
     Box(Modifier.offset((x - 10).dp, (f.barTop - 13).dp).then(dy).size(26.dp).background(th.bg, CircleShape))
     Box(Modifier.offset((x - 6).dp, (f.barTop - 9).dp).then(dy).size(18.dp).background(if (th.deco == Deco.GOLD) th.accent else th.fill, CircleShape))
@@ -380,6 +391,7 @@ private fun ProgressRail(m: ReaderModel, f: Frame) {
     Box(Modifier.offset(0.dp, (f.barTop - 16).dp).then(dy).width((x - 24).dp), contentAlignment = Alignment.CenterEnd) {
         Box(
             Modifier
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                 .clip(RoundedCornerShape(999.dp))
                 .background(if (th.deco == Deco.GOLD) th.playerBg else th.card)
                 .border1(th.border, 999)
