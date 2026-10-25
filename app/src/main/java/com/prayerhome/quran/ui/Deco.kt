@@ -74,8 +74,43 @@ fun DrawScope.sunburst(stroke: Color, fill: Color?, side: Float = size.width) {
 /** The verse-end ornament of each theme (the number is drawn on top by the caller). */
 fun DrawScope.verseMarker(deco: Deco, gold: Color, filled: Color?, side: Float) = when (deco) {
     Deco.AMBER -> octagram(50f, 10f, gold, 1.4f, filled, side)
-    Deco.INDIGO -> diamond(46f, 9f, 3f, gold, 1.4f, filled, inner = 15f, side = side)
+    // the outer diamond nearly fills its box and the inner one sits just inside it, leaving room for the digits
+    Deco.INDIGO -> diamond(46f, 7f, 3f, gold, 1.4f, filled, inner = 9.6f, innerAlpha = 0.55f, side = side)
     Deco.GOLD -> sunburst(gold, filled, side)
+}
+
+/**
+ * The small page-number badge drawn beside the marker of a page's last verse ([w]×[h] px, number drawn by the caller):
+ * a cut-corner tablet (Night Amber), a pointed cartouche (Midnight Indigo) or a pill with two gold dots (Gold Leaf).
+ */
+fun DrawScope.pageBadge(th: QTheme, w: Float, h: Float) {
+    val sw = (h / 18f).coerceAtLeast(1f)
+    when (th.deco) {
+        Deco.AMBER -> {
+            val c = h * 0.28f
+            val p = Path().apply {
+                moveTo(c, 0f); lineTo(w - c, 0f); lineTo(w, c); lineTo(w, h - c); lineTo(w - c, h); lineTo(c, h); lineTo(0f, h - c); lineTo(0f, c); close()
+            }
+            drawPath(p, th.card)
+            drawPath(p, th.gold, style = Stroke(sw))
+        }
+        Deco.INDIGO -> {
+            val c = h * 0.42f
+            val p = Path().apply {
+                moveTo(c, 0f); lineTo(w - c, 0f); lineTo(w, h / 2); lineTo(w - c, h); lineTo(c, h); lineTo(0f, h / 2); close()
+            }
+            drawPath(p, th.card)
+            drawPath(p, th.gold, style = Stroke(sw))
+        }
+        Deco.GOLD -> {
+            val r = h * 0.12f
+            val inset = r * 2.6f
+            drawRoundRect(th.card, Offset(inset, 0f), Size(w - 2 * inset, h), CornerRadius(h / 2))
+            drawRoundRect(th.gold, Offset(inset, 0f), Size(w - 2 * inset, h), CornerRadius(h / 2), style = Stroke(sw))
+            drawCircle(th.gold, r, Offset(r, h / 2))
+            drawCircle(th.gold, r, Offset(w - r, h / 2))
+        }
+    }
 }
 
 /** A progress ring (Gold Leaf khatma). */

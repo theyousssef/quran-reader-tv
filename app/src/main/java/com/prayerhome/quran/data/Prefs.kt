@@ -34,14 +34,15 @@ class Prefs(ctx: Context) {
         get() = sp.getInt("topVerse", 0)
         set(v) = sp.edit().putInt("topVerse", v).apply()
 
-    /** Where "Continue reading" leads: the reading position when the app was last left. */
+    /** The reading position when the app was last left (kept for reference; resuming uses [scrollItem]). */
     var continueVerse: Int
         get() = sp.getInt("continueVerse", -1)
         set(v) = sp.edit().putInt("continueVerse", v).apply()
 
-    /** The single saved verse (global index), or -1. */
+    /** The single bookmarked verse (global index). There is always one: Al-Fatiha 1 by default, and an
+     *  older "no bookmark" (-1) reads as Al-Fatiha 1. */
     var bookmark: Int
-        get() = sp.getInt("bookmark", -1)
+        get() = sp.getInt("bookmark", 0).let { if (it in 0 until Quran.VERSES) it else 0 }
         set(v) = sp.edit().putInt("bookmark", v).apply()
 
     var repeat: Boolean

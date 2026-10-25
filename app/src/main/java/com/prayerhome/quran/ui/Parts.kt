@@ -29,7 +29,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -38,6 +37,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -51,7 +53,6 @@ import androidx.compose.ui.unit.dp
 import com.prayerhome.quran.audio.PlaybackService
 import com.prayerhome.quran.audio.Reciters
 import com.prayerhome.quran.data.Quran
-import kotlinx.coroutines.delay
 
 private suspend fun frames(n: Int) = repeat(n) { withFrameNanos { } }
 
@@ -82,7 +83,7 @@ fun SidePanel(m: ReaderModel, f: Frame) {
             .padding(start = pad[1].dp, end = pad[1].dp, top = pad[0].dp, bottom = pad[2].dp)
             .keys { code ->
                 when (code) {
-                    KeyEvent.KEYCODE_DPAD_RIGHT -> { if (m.tab < 2) m.tab++ else m.closeMenu(); true }
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> { if (m.tab < TAB_NAMES.size - 1) m.tab++ else m.closeMenu(); true }
                     KeyEvent.KEYCODE_DPAD_LEFT -> { if (m.tab > 0) m.tab--; true }
                     -KeyEvent.KEYCODE_DPAD_RIGHT, -KeyEvent.KEYCODE_DPAD_LEFT -> true
                     else -> false
@@ -126,33 +127,34 @@ private fun PanelHeader(th: QTheme) {
     }
 }
 
+/** "Continue from bookmark": opens the bookmarked verse and lights it up (and moves a recitation there). */
 @Composable
 private fun ContinueCard(m: ReaderModel, fr: FocusRequester) {
     val th = m.theme
-    val v = m.continueVerse.coerceIn(0, Quran.VERSES - 1)
+    val v = m.bookmark
     val r = Quran.refOf(v)
-    Focusable(onClick = { m.open(v) }, focusRequester = fr) { focused ->
+    Focusable(onClick = { m.openBookmark() }, focusRequester = fr) { focused ->
         val shape = RoundedCornerShape((if (th.deco == Deco.GOLD) 20 else 18).dp)
         val base = Modifier.fillMaxWidth().clip(shape)
             .background(if (th.deco == Deco.GOLD) th.bg else th.card, shape)
             .border(if (focused) 2.dp else 1.dp, if (focused) th.accent else (if (th.deco == Deco.GOLD) th.line else th.border), shape)
+        val ic = if (th.deco == Deco.GOLD) th.arAccent else th.accent
         if (th.deco == Deco.GOLD) {
             Row(base.padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                val frac = (v + 1f) / Quran.VERSES
-                Box(Modifier.size(64.dp), contentAlignment = Alignment.Center) {
-                    Ring(64, 5f, th.track, th.fill, frac)
-                    T("${(frac * 100).toInt()}%", th.ui, 15, th.arAccent, weight = 600)
+                Box(Modifier.size(64.dp).clip(CircleShape).background(th.card).border(1.5.dp, th.fill, CircleShape), contentAlignment = Alignment.Center) {
+                    Icon(Ico.BOOKMARK, ic, 28, stroke = 2f)
                 }
                 Column(Modifier.weight(1f)) {
-                    T("Continue reading", Fonts.Cormorant, 23, th.text, weight = 600)
+                    T("Continue from bookmark", Fonts.Cormorant, 23, th.text, weight = 600)
                     T("${Quran.nameEn(r.surah)} · Verse ${r.ayah} · Juz ${Quran.juzOf(v)} of 30", th.ui, 15, th.muted)
                 }
                 Icon(Ico.CHEVRON_RIGHT, th.arAccent, 22, stroke = 2f)
             }
         } else {
             Row(base.padding(horizontal = 22.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Icon(Ico.BOOKMARK, ic, 30, stroke = 2f)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    T("CONTINUE READING", th.ui, 15, if (th.deco == Deco.AMBER) th.accent else th.accent, spacing = 0.18f)
+                    T("CONTINUE FROM BOOKMARK", th.ui, 15, th.accent, spacing = 0.14f)
                     T("${Quran.nameEn(r.surah)} · Verse ${r.ayah}", th.ui, 24, th.text)
                 }
                 Ar(Quran.nameAr(r.surah), th.arUi, 28, th.arAccent, weight = th.arUiWeight)
@@ -162,7 +164,7 @@ private fun ContinueCard(m: ReaderModel, fr: FocusRequester) {
     }
 }
 
-private val TAB_NAMES = listOf("Surah", "Juz", "Saved")
+private val TAB_NAMES = listOf("Surah", "Juz")
 
 @Composable
 private fun Tabs(th: QTheme, tab: Int) {
@@ -181,7 +183,7 @@ private fun Tabs(th: QTheme, tab: Int) {
                 Column {
                     T(if (i == 0) "Surahs" else n, th.ui, 21, if (on) th.text else th.muted, weight = if (on) 500 else 400)
                     Spacer(Modifier.height(12.dp))
-                    Box(Modifier.width(if (i == 0) 84.dp else if (i == 1) 36.dp else 62.dp).height(3.dp).background(if (on) th.accent else Color.Transparent))
+                    Box(Modifier.width(if (i == 0) 84.dp else 36.dp).height(3.dp).background(if (on) th.accent else Color.Transparent))
                 }
             }
         }
@@ -204,8 +206,8 @@ private fun ColumnScope.MenuList(m: ReaderModel, continueReq: FocusRequester) {
     val state = rememberLazyListState()
     val reqs = remember { HashMap<Int, FocusRequester>() }
     val tab = m.tab
-    val count = when (tab) { 0 -> 114; 1 -> 30; else -> if (m.bookmark >= 0) 1 else 0 }
-    val target = when (tab) { 0 -> m.currentSurah - 1; 1 -> Quran.juzOf(m.progressVerse) - 1; else -> 0 }
+    val count = if (tab == 0) 114 else 30
+    val target = if (tab == 0) m.currentSurah - 1 else Quran.juzOf(m.progressVerse) - 1
     LaunchedEffect(Unit) {
         if (count > 0) state.scrollToItem((target - 3).coerceAtLeast(0))
         frames(2)
@@ -222,7 +224,7 @@ private fun ColumnScope.MenuList(m: ReaderModel, continueReq: FocusRequester) {
                         m.open(Quran.surahStart(s))
                     }
                 }
-                1 -> {
+                else -> {
                     val j = i + 1
                     val st = Quran.juzStart(j)
                     val idx = st.index
@@ -230,20 +232,7 @@ private fun ColumnScope.MenuList(m: ReaderModel, continueReq: FocusRequester) {
                         m.open(idx)
                     }
                 }
-                else -> {
-                    val v = m.bookmark
-                    val r = Quran.refOf(v)
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        MenuRow(th, r.surah, "${r.surah}", "${Quran.nameEn(r.surah)} · Verse ${r.ayah}", "Saved verse · page ${Quran.pageOf(v)} · juz ${Quran.juzOf(v)}", Quran.nameAr(r.surah), false, fr) { m.open(v) }
-                        Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(th.card).padding(horizontal = 16.dp, vertical = 6.dp)) {
-                            Ar(m.quran.text(v), m.font.family, 30, th.text, Modifier.fillMaxWidth(), lineHeight = 1.9f, align = TextAlign.Right, maxLines = 7)
-                        }
-                    }
-                }
             }
-        }
-        if (count == 0) item {
-            T("No saved verse yet. Press OK on the text to mark a verse, OK again, then choose Bookmark.", th.ui, 18, th.muted, maxLines = 4, lineHeight = 1.5f)
         }
     }
 }
@@ -324,7 +313,7 @@ fun Rail(m: ReaderModel, f: Frame) {
             }
             Ar(Quran.nameAr(s), th.arUi, if (round) 26 else 22, if (th.deco == Deco.INDIGO) th.gold else th.arAccent, weight = th.arUiWeight, lineHeight = if (round) 1.5f else 0f)
         }
-        for ((i, ico) in listOf(Ico.LIST, Ico.LAYERS, Ico.BOOKMARK).withIndex()) {
+        for ((i, ico) in listOf(Ico.LIST, Ico.LAYERS).withIndex()) {
             val on = i == 0
             Box(Modifier.size(btn.dp).clip(shape).background(if (on) th.card else Color.Transparent), contentAlignment = Alignment.Center) {
                 Icon(ico, if (on) iconColor else th.muted, if (round) 22 else 24)
@@ -365,9 +354,11 @@ fun Toolbar(m: ReaderModel, f: Frame) {
             else T(Quran.nameEn(m.currentSurah), th.display, 26, th.text, weight = 500)
             if (th.deco == Deco.AMBER) Box(Modifier.size(1.dp, 26.dp).background(th.line))
             T("Juz ${Quran.juzOf(v)} · Page ${Quran.pageOf(v)} of ${Quran.PAGES}", th.ui, when (th.deco) { Deco.AMBER -> 20; Deco.INDIGO -> 19; Deco.GOLD -> 18 }, th.muted)
+            if (m.recMode) RecModeBanner(m)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (th.deco == Deco.GOLD) 10.dp else 12.dp)) {
-            ToolButton(th, fr = m.toolFocus, radius = if (th.deco == Deco.INDIGO) 999 else th.toolRadius, onClick = { m.openPopup(Popup.FONT) }) {
+            // Left from the first button goes back down, like ▼ (a second Left then opens the menu as usual).
+            ToolButton(th, fr = m.toolFocus, radius = if (th.deco == Deco.INDIGO) 999 else th.toolRadius, onLeft = { m.focusHome() }, onClick = { m.openPopup(Popup.FONT) }) {
                 Ar("ع", m.font.family, if (th.deco == Deco.INDIGO) 30 else 26, th.arAccent, lineHeight = 1f)
                 T("Quran font", th.ui, if (th.deco == Deco.GOLD) 16 else 17, th.text, weight = if (th.deco == Deco.GOLD) 500 else 400)
             }
@@ -377,7 +368,8 @@ fun Toolbar(m: ReaderModel, f: Frame) {
             ToolButton(th, width = if (th.deco == Deco.AMBER) 54 else 50, onClick = { m.textLarger() }) {
                 T("A+", th.ui, if (th.deco == Deco.GOLD) 20 else 21, th.text)
             }
-            ToolButton(th, onClick = { m.openPopup(Popup.RECITER) }) {
+            // In recitation mode the reciter is chosen from the player bar instead.
+            if (!m.recMode) ToolButton(th, onClick = { m.openPopup(Popup.RECITER) }) {
                 Box(Modifier.size(30.dp).clip(CircleShape).background(th.monoBg), contentAlignment = Alignment.Center) {
                     T(rs.reciter.mono, if (th.deco == Deco.GOLD) Fonts.Cormorant else th.ui, 13, th.monoFg, weight = 700)
                 }
@@ -392,8 +384,15 @@ fun Toolbar(m: ReaderModel, f: Frame) {
 }
 
 @Composable
-private fun ToolButton(th: QTheme, width: Int = 0, radius: Int = th.toolRadius, fr: FocusRequester? = null, onClick: () -> Unit, content: @Composable () -> Unit) {
-    Focusable(onClick = onClick, focusRequester = fr) { focused ->
+private fun ToolButton(th: QTheme, width: Int = 0, radius: Int = th.toolRadius, fr: FocusRequester? = null, onLeft: (() -> Unit)? = null, onClick: () -> Unit, content: @Composable () -> Unit) {
+    val mod = if (onLeft == null) Modifier else Modifier.keys { code ->
+        when (code) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> { onLeft(); true }
+            -KeyEvent.KEYCODE_DPAD_LEFT -> true
+            else -> false
+        }
+    }
+    Focusable(mod, onClick = onClick, focusRequester = fr) { focused ->
         val shape = RoundedCornerShape(radius.dp)
         Row(
             Modifier.height(46.dp).let { if (width > 0) it.width(width.dp) else it }.clip(shape)
@@ -406,24 +405,66 @@ private fun ToolButton(th: QTheme, width: Int = 0, radius: Int = th.toolRadius, 
     }
 }
 
+/** "——— In Audio Recitation mode · CLICK TO EXIT ———": OK stops the recitation, hides the player and deletes its files. */
+@Composable
+private fun RecModeBanner(m: ReaderModel) {
+    val th = m.theme
+    val mod = Modifier.padding(start = 6.dp).keys { code -> code == KeyEvent.KEYCODE_DPAD_LEFT || code == -KeyEvent.KEYCODE_DPAD_LEFT }
+    Focusable(mod, onClick = { m.exitRecitation() }, focusRequester = m.bannerFocus) { fo ->
+        val sh = RoundedCornerShape(if (th.deco == Deco.GOLD) 999.dp else 12.dp)
+        val fg = if (fo) th.onAccent else (if (th.deco == Deco.GOLD) th.arAccent else th.accent)
+        Row(
+            Modifier.height(46.dp).clip(sh).background(if (fo) th.accent else th.card, sh)
+                .border(if (fo) 2.dp else 1.dp, if (fo) th.text else th.border, sh).padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            BannerRule(th, fg, true)
+            T("In Audio Recitation mode", if (th.deco == Deco.GOLD) Fonts.Cormorant else th.ui, if (th.deco == Deco.GOLD) 21 else 18, if (fo) th.onAccent else th.text, weight = if (th.deco == Deco.GOLD) 700 else 500, italic = th.deco == Deco.GOLD)
+            T("·", th.ui, 18, fg)
+            T("CLICK TO EXIT", th.ui, 15, fg, weight = 700, spacing = 0.12f)
+            BannerRule(th, fg, false)
+        }
+    }
+}
+
+/** A short rule ending in the theme's ornament, pointing at the banner's text. */
+@Composable
+private fun BannerRule(th: QTheme, color: Color, leading: Boolean) {
+    Canvas(Modifier.size(34.dp, 12.dp)) {
+        val y = size.height / 2
+        val o = size.height
+        val ox = if (leading) size.width - o else 0f
+        val lx0 = if (leading) 0f else o + 2.dp.toPx()
+        val lx1 = if (leading) size.width - o - 2.dp.toPx() else size.width
+        drawRect(color, Offset(lx0, y - 0.75.dp.toPx()), Size(lx1 - lx0, 1.5.dp.toPx()))
+        translate(ox, 0f) {
+            when (th.deco) {
+                Deco.AMBER -> octagram(12f, 2.5f, color, 1.4f, side = o)
+                Deco.INDIGO -> diamond(12f, 2f, 1f, color, 1.4f, color, side = o)
+                Deco.GOLD -> drawCircle(color, o * 0.28f, Offset(o / 2, y))
+            }
+        }
+    }
+}
+
 // ================================================================ recitation bar
 
+/**
+ * The player bar of Audio Recitation mode: play/pause, previous, next, the clip's progress, repeat and the
+ * reciter (the place to change reciter while reciting). ◀/▶ move along it; ◀ on play/pause opens the menu;
+ * ▲ goes to the exit banner.
+ */
 @Composable
 fun PlayerBar(m: ReaderModel, f: Frame) {
     val th = m.theme
     val rs by m.rec.state.collectAsState()
-    var pos by remember { mutableIntStateOf(0) }
-    var dur by remember { mutableIntStateOf(0) }
-    LaunchedEffect(rs.surah, rs.ayah, rs.basmala, rs.buffering) {
-        while (true) { pos = m.rec.positionMs(); dur = m.rec.durationMs(); delay(250) }
-    }
     val shape = RoundedCornerShape(26.dp)
     Row(
         Modifier.offset(f.contentX.dp, f.playerY.dp).size(f.contentW.dp, 104.dp).clip(shape).background(th.playerBg, shape).border(1.dp, th.line, shape)
             .padding(horizontal = 16.dp)
             .keys { code ->
                 when (code) {
-                    KeyEvent.KEYCODE_DPAD_UP -> { m.focusToolbar(); true }
+                    KeyEvent.KEYCODE_DPAD_UP -> { m.focusBanner(); true }
                     KeyEvent.KEYCODE_DPAD_DOWN, -KeyEvent.KEYCODE_DPAD_UP, -KeyEvent.KEYCODE_DPAD_DOWN -> true
                     else -> false
                 }
@@ -431,19 +472,18 @@ fun PlayerBar(m: ReaderModel, f: Frame) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Focusable(onClick = { m.rec.togglePause() }, focusRequester = m.playFocus) { fo ->
+        val playMod = Modifier
+            .onFocusChanged { m.playFocused = it.isFocused }
+            .keys { code ->
+                when (code) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> { m.openMenu(0); true }
+                    -KeyEvent.KEYCODE_DPAD_LEFT -> true
+                    else -> false
+                }
+            }
+        Focusable(playMod, onClick = { m.rec.togglePause() }, focusRequester = m.playFocus) { fo ->
             Box(Modifier.size(74.dp).ring(fo, th.text).clip(CircleShape).background(th.accent), contentAlignment = Alignment.Center) {
                 Glyph(if (rs.playing) Ico.PAUSE else Ico.PLAY, th.onAccent, 30)
-            }
-        }
-        Focusable(onClick = { m.rec.stop(); m.focusText() }) { fo ->
-            val sh = RoundedCornerShape(999.dp)
-            Row(
-                Modifier.height(52.dp).clip(sh).background(th.card).border(if (fo) 2.dp else 1.dp, if (fo) th.accent else th.border, sh).padding(horizontal = 18.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Box(Modifier.size(14.dp).clip(RoundedCornerShape(2.dp)).background(th.accent))
-                T("Stop", th.ui, 17, th.text)
             }
         }
         RoundButton(th, Ico.PREV) { m.rec.previous() }
@@ -453,17 +493,20 @@ fun PlayerBar(m: ReaderModel, f: Frame) {
                 val what = if (rs.basmala) "basmala" else "verse ${rs.ayah}"
                 val status = when {
                     rs.buffering && rs.playing -> rs.error ?: "Loading $what…"
-                    rs.playing -> "Now reciting · $what"
-                    else -> "Paused · $what"
+                    rs.playing -> "Now reciting · ${Quran.nameEn(rs.surah)} · $what"
+                    else -> "Paused · ${Quran.nameEn(rs.surah)} · $what"
                 }
                 T(if (th.deco == Deco.GOLD) status.uppercase() else status, th.ui, if (th.deco == Deco.GOLD) 17 else 18, if (rs.playing) th.arAccent.takeIf { th.deco == Deco.GOLD } ?: th.accent else th.muted, Modifier.weight(1f), weight = if (th.deco == Deco.GOLD) 600 else 500)
-                T("${clock(pos)} / ${clock(dur)}", th.ui, if (th.deco == Deco.GOLD) 17 else 18, th.muted)
+                T("${clock(m.clipSecond * 1000)} / ${clock(m.clipSeconds * 1000)}", th.ui, if (th.deco == Deco.GOLD) 17 else 18, th.muted)
             }
-            val frac = if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f
-            Box(Modifier.fillMaxWidth().height(16.dp), contentAlignment = Alignment.CenterStart) {
-                Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(6.dp)).background(th.track))
-                Box(Modifier.fillMaxWidth(frac).height(6.dp).clip(RoundedCornerShape(6.dp)).background(th.fill))
-                Canvas(Modifier.fillMaxSize()) { drawCircle(th.knob, 8.dp.toPx(), Offset(size.width * frac, size.height / 2)) }
+            // Drawn from the per-frame progress in the draw phase only: it glides without recomposing the bar.
+            Canvas(Modifier.fillMaxWidth().height(16.dp)) {
+                val frac = m.clipProgress.floatValue.coerceIn(0f, 1f)
+                val h = 6.dp.toPx()
+                val y = (size.height - h) / 2
+                drawRoundRect(th.track, Offset(0f, y), Size(size.width, h), CornerRadius(h / 2))
+                if (frac > 0f) drawRoundRect(th.fill, Offset(0f, y), Size(size.width * frac, h), CornerRadius(h / 2))
+                drawCircle(th.knob, 8.dp.toPx(), Offset(size.width * frac, size.height / 2))
             }
         }
         Focusable(onClick = { m.rec.toggleRepeat() }) { fo ->
@@ -471,7 +514,8 @@ fun PlayerBar(m: ReaderModel, f: Frame) {
                 Icon(Ico.REPEAT, if (rs.repeat) th.accent else th.muted, 22)
             }
         }
-        Focusable(onClick = { m.openPopup(Popup.RECITER) }) { fo ->
+        val lastMod = Modifier.keys { code -> code == KeyEvent.KEYCODE_DPAD_RIGHT || code == -KeyEvent.KEYCODE_DPAD_RIGHT }
+        Focusable(lastMod, onClick = { m.openPopup(Popup.RECITER) }) { fo ->
             val sh = RoundedCornerShape(999.dp)
             Row(
                 Modifier.height(72.dp).clip(sh).background(th.card).border(2.dp, if (fo || m.popup == Popup.RECITER) th.accent else Color.Transparent, sh).padding(start = 8.dp, end = 18.dp),
@@ -647,7 +691,7 @@ fun VerseOptions(m: ReaderModel, f: Frame) {
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OptionButton(th, Modifier.weight(1f), reqs[0], true, Ico.PLAY, "Recite from here", "Player starts at this verse") { m.reciteMarked() }
-                OptionButton(th, Modifier.weight(1f), reqs[1], false, Ico.BOOKMARK, "Bookmark verse", if (m.bookmark >= 0) "Replaces your saved verse" else "Save it under Saved") { m.bookmarkMarked() }
+                OptionButton(th, Modifier.weight(1f), reqs[1], false, Ico.BOOKMARK, "Bookmark verse", "Moves your bookmark here") { m.bookmarkMarked() }
             }
         }
     }

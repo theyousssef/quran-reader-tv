@@ -16,13 +16,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -36,8 +35,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
@@ -59,16 +58,15 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.nativeKeyCode
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.PlaceholderVerticalAlign
-import androidx.compose.ui.text.Placeholder
-import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.platform.LocalFontFamilyResolver
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -135,20 +133,32 @@ fun ReaderScreen(m: ReaderModel) {
 private fun ReadingColumn(m: ReaderModel, f: Frame, focusable: Boolean) {
     val th = m.theme
     val h = f.readBottom - f.readTop
-    val measurer = rememberTextMeasurer(cacheSize = 64)
+    // One line at the largest size: the list reaches this far below the visible column (clipped).
+    val extra = 200
+    val measurer = rememberTextMeasurer(cacheSize = 24)
+    m.measurer = measurer
+    m.fontResolver = LocalFontFamilyResolver.current
+    m.columnPx = (f.colW * m.pxPerDp).roundToInt()
+    m.extraPx = extra * m.pxPerDp
 
     LaunchedEffect(m) {
+        var savedAt = 0L
         snapshotFlow { m.list.firstVisibleItemIndex to m.list.firstVisibleItemScrollOffset }.collectLatest {
             m.updateTop()
+            // While the page glides along with a recitation it never rests, so save on the way too.
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - savedAt > 3000) { savedAt = now; m.savePosition() }
             delay(700)
             m.savePosition()
         }
     }
+    LaunchedEffect(m.recMode) { if (m.recMode) m.follow() }
 
     Box(
         Modifier
             .offset(f.colX.dp, f.readTop.dp)
             .size(f.colW.dp, h.dp)
+            .clipToBounds()
             .focusRequester(m.textFocus)
             .focusProperties { canFocus = focusable }
             .onPreviewKeyEvent { e ->
@@ -160,13 +170,13 @@ private fun ReadingColumn(m: ReaderModel, f: Frame, focusable: Boolean) {
         LazyColumn(
             state = m.list,
             userScrollEnabled = false,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 60.dp, bottom = (h * 0.55f).dp),
+            modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).height((h + extra).dp),
+            contentPadding = PaddingValues(top = 60.dp, bottom = (h * 0.55f + extra).dp),
         ) {
             items(m.items.size, key = { it }, contentType = { if (m.items[it] is Item.Header) 0 else 1 }) { i ->
                 when (val item = m.items[i]) {
                     is Item.Header -> SurahHeader(m, item.surah)
-                    is Item.Block -> VerseBlock(m, i, item, measurer)
+                    is Item.Block -> VerseBlock(m, i, item)
                 }
             }
         }
@@ -188,75 +198,83 @@ fun quranStyle(m: ReaderModel, th: QTheme): TextStyle {
     )
 }
 
+/**
+ * One mushaf page of a surah, drawn straight from its cached layout (no BasicText): highlights, the text,
+ * then the verse markers (and the page badge) in one pass. Lines are right-aligned, not justified: Compose's
+ * justified lines don't report justified glyph positions, which would misplace markers and highlights.
+ */
 @Composable
-private fun VerseBlock(m: ReaderModel, index: Int, b: Item.Block, measurer: TextMeasurer) {
+private fun VerseBlock(m: ReaderModel, index: Int, b: Item.Block) {
     val th = m.theme
-    val bt = remember(index) { m.blockText(index) }
-    val style = remember(th, m.fontIndex, m.size) { quranStyle(m, th) }
-    val numStyle = remember(th, m.fontIndex) { TextStyle(fontFamily = m.font.family, fontSize = 20.sp, fontWeight = if (th.deco == Deco.GOLD) FontWeight.Bold else FontWeight.Normal) }
-    val ms = th.markerSize
-    // Placeholders only reserve the space; the markers are drawn in one pass below (cheaper than a
-    // composable per marker). Lines are right-aligned, not justified: Compose's justified lines don't
-    // report justified glyph positions, which would misplace markers and highlights.
-    val inline = remember(index, th) {
-        val ph = InlineTextContent(Placeholder((ms + 16).sp, ms.sp, PlaceholderVerticalAlign.TextCenter)) {}
-        (b.from..b.to).associate { v -> v.toString() to ph }
-    }
+    val bl = m.blockLayout(index)
+    val bt = m.blockText(index)
     val first = Quran.surahStart(b.surah)
-    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
-    DisposableEffect(index) { onDispose { m.layouts.remove(index); m.coords.remove(index) } }
-    BasicText(
-        bt.text,
+    DisposableEffect(index) { onDispose { m.coords.remove(index) } }
+    Layout(
         modifier = Modifier
             .fillMaxWidth()
             .onGloballyPositioned { m.coords[index] = it }
             .graphicsLayer { alpha = if (b.surah < m.currentSurah) 0.33f else 1f }
             .drawBehind {
-                val l = layout ?: return@drawBehind
+                val l = bl.layout
                 val px = m.pxPerDp
-                val inset = m.size * m.font.lineHeight * px * 0.07f
-                val rad = (if (th.deco == Deco.GOLD) 6f else 12f) * px
-                val rec = m.recIdx
-                if (rec in b.from..b.to && rec != m.marked) {
-                    for (r in m.verseRects(index, rec, l)) {
-                        val rr = Rect(r.left - 8 * px, r.top + inset, r.right + 8 * px, r.bottom - inset)
-                        drawRoundRect(th.recited, rr.topLeft, rr.size, CornerRadius(rad))
-                        if (th.deco == Deco.GOLD) drawRect(th.gold, Offset(rr.left, rr.bottom - 3 * px), Size(rr.width, 3 * px))
+                translate(0f, -bl.shift) {
+                    val inset = m.size * m.font.lineHeight * px * 0.07f
+                    val rad = (if (th.deco == Deco.GOLD) 6f else 12f) * px
+                    val rec = m.recIdx
+                    if (rec in b.from..b.to && rec != m.marked) {
+                        for (r in m.verseRects(index, rec, l)) {
+                            val rr = Rect(r.left - 8 * px, r.top + inset, r.right + 8 * px, r.bottom - inset)
+                            drawRoundRect(th.recited, rr.topLeft, rr.size, CornerRadius(rad))
+                            if (th.deco == Deco.GOLD) drawRect(th.gold, Offset(rr.left, rr.bottom - 3 * px), Size(rr.width, 3 * px))
+                        }
                     }
-                }
-                val mk = m.marked
-                if (mk in b.from..b.to) {
-                    for (r in m.verseRects(index, mk, l)) {
-                        val rr = Rect(r.left - 8 * px, r.top + inset, r.right + 8 * px, r.bottom - inset)
-                        drawRoundRect(th.pick, rr.topLeft, rr.size, CornerRadius(rad))
-                        drawRoundRect(th.accent, rr.topLeft, rr.size, CornerRadius(rad), style = Stroke(3 * px))
+                    val gv = m.glowVerse
+                    if (gv in b.from..b.to) {
+                        val a = m.bookmarkGlow.value
+                        for (r in m.verseRects(index, gv, l)) {
+                            val rr = Rect(r.left - 10 * px, r.top + inset * 0.6f, r.right + 10 * px, r.bottom - inset * 0.6f)
+                            drawRoundRect(th.gold.copy(alpha = 0.26f * a), rr.topLeft, rr.size, CornerRadius(rad))
+                            drawRoundRect(th.gold.copy(alpha = 0.9f * a), rr.topLeft, rr.size, CornerRadius(rad), style = Stroke(2 * px))
+                        }
                     }
-                }
-            }
-            .drawWithContent {
-                drawContent()
-                val l = layout ?: return@drawWithContent
-                val d = ms * m.pxPerDp
-                val rec = m.recIdx
-                val rects = l.placeholderRects
-                for (k in bt.starts.indices) {
-                    val v = b.from + k
-                    val pr = rects.getOrNull(k) ?: break
-                    val cx = pr.center.x
-                    val cy = pr.center.y
-                    val on = rec == v
-                    translate(cx - d / 2, cy - d / 2) {
-                        verseMarker(th.deco, th.gold, if (on) (if (th.deco == Deco.GOLD) th.accent else th.gold) else null, d)
+                    val mk = m.marked
+                    if (mk in b.from..b.to) {
+                        for (r in m.verseRects(index, mk, l)) {
+                            val rr = Rect(r.left - 8 * px, r.top + inset, r.right + 8 * px, r.bottom - inset)
+                            drawRoundRect(th.pick, rr.topLeft, rr.size, CornerRadius(rad))
+                            drawRoundRect(th.accent, rr.topLeft, rr.size, CornerRadius(rad), style = Stroke(3 * px))
+                        }
                     }
-                    val color = if (on) (if (th.deco == Deco.GOLD) th.onAccent else th.bg) else (if (th.deco == Deco.GOLD) th.arAccent else th.gold)
-                    val r = measurer.measure(Quran.arabicNumber(v - first + 1), numStyle.copy(color = color))
-                    drawText(r, topLeft = Offset(cx - r.size.width / 2f, cy - r.size.height / 2f))
+                    drawText(l)
+                    val d = th.markerSize * px
+                    val rects = l.placeholderRects
+                    val n = bt.starts.size
+                    for (k in 0 until n) {
+                        val v = b.from + k
+                        val pr = rects.getOrNull(k) ?: break
+                        val cx = pr.right - 8 * px - d / 2
+                        val cy = pr.center.y
+                        val on = rec == v
+                        translate(cx - d / 2, cy - d / 2) {
+                            verseMarker(th.deco, th.gold, if (on) (if (th.deco == Deco.GOLD) th.accent else th.gold) else null, d)
+                        }
+                        val color = if (on) (if (th.deco == Deco.GOLD) th.onAccent else th.bg) else (if (th.deco == Deco.GOLD) th.arAccent else th.gold)
+                        val num = m.inkText(Quran.arabicNumber(v - first + 1), page = false)
+                        drawText(num.layout, color = color, topLeft = Offset(cx - num.cx, cy - num.cy))
+                        if (k == n - 1 && bt.page > 0) {
+                            val bw = ReaderModel.badgeW(th) * px
+                            val bh = ReaderModel.badgeH(th) * px
+                            val bx = cx - d / 2 - 4 * px - bw
+                            translate(bx, cy - bh / 2) { pageBadge(th, bw, bh) }
+                            val pn = m.inkText(Quran.arabicNumber(bt.page), page = true)
+                            drawText(pn.layout, color = if (th.deco == Deco.GOLD) th.arAccent else th.gold, topLeft = Offset(bx + bw / 2 - pn.cx, cy - pn.cy))
+                        }
+                    }
                 }
             },
-        style = style,
-        inlineContent = inline,
-        onTextLayout = { layout = it; m.layouts[index] = it },
-    )
+        content = {},
+    ) { _, c -> layout(c.maxWidth, bl.height) {} }
 }
 
 @Composable
@@ -334,20 +352,27 @@ private fun c(v: Long) = Color(0xFF000000 or v)
 @Composable
 private fun ProgressRail(m: ReaderModel, f: Frame) {
     val th = m.theme
-    val s = m.currentSurah
+    val rs by m.rec.state.collectAsState()
+    // In recitation mode the rail follows the recited verse, moving on through it with the audio.
+    val reciting = m.recMode && !rs.basmala
+    val s = if (m.recMode) rs.surah else m.currentSurah
     val total = Quran.ayahs(s)
-    val ayah = (m.progressVerse - Quran.surahStart(s) + 1).coerceIn(1, total)
-    val frac = ayah.toFloat() / total
+    val ayah = (if (reciting) rs.ayah else m.progressVerse - Quran.surahStart(s) + 1).coerceIn(1, total)
+    val still = ayah.toFloat() / total
+    val frac: () -> Float = if (reciting) ({ ((ayah - 1 + m.clipProgress.floatValue) / total).coerceIn(0f, 1f) }) else ({ if (m.recMode) 0f else still })
     val h = 1080 - f.barTop - f.barBottom
     val x = 1920 - f.barRight - 6
-    Box(Modifier.offset(x.dp, f.barTop.dp).size(6.dp, h.dp).background(th.track, RoundedCornerShape(6.dp))) {
-        Box(Modifier.size(6.dp, (h * frac).dp).background(th.fill, RoundedCornerShape(6.dp)))
-    }
+    val px = m.pxPerDp
+    Box(
+        Modifier.offset(x.dp, f.barTop.dp).size(6.dp, h.dp).background(th.track, RoundedCornerShape(6.dp))
+            .drawBehind { drawRoundRect(th.fill, Offset.Zero, Size(size.width, size.height * frac()), CornerRadius(3 * px)) },
+    )
+    val dy = Modifier.offset { IntOffset(0, (h * frac() * px).roundToInt()) }
     // knob with its 4px ring in the page colour
-    Box(Modifier.offset((x - 10).dp, (f.barTop + h * frac - 13).dp).size(26.dp).background(th.bg, CircleShape))
-    Box(Modifier.offset((x - 6).dp, (f.barTop + h * frac - 9).dp).size(18.dp).background(if (th.deco == Deco.GOLD) th.accent else th.fill, CircleShape))
+    Box(Modifier.offset((x - 10).dp, (f.barTop - 13).dp).then(dy).size(26.dp).background(th.bg, CircleShape))
+    Box(Modifier.offset((x - 6).dp, (f.barTop - 9).dp).then(dy).size(18.dp).background(if (th.deco == Deco.GOLD) th.accent else th.fill, CircleShape))
     // "ayah / total" pill, right-aligned 24px left of the rail
-    Box(Modifier.offset(0.dp, (f.barTop + h * frac - 16).dp).width((x - 24).dp), contentAlignment = Alignment.CenterEnd) {
+    Box(Modifier.offset(0.dp, (f.barTop - 16).dp).then(dy).width((x - 24).dp), contentAlignment = Alignment.CenterEnd) {
         Box(
             Modifier
                 .clip(RoundedCornerShape(999.dp))
@@ -372,16 +397,17 @@ private fun MarkScrim(m: ReaderModel, f: Frame) {
     Canvas(Modifier.size(1920.dp, 1080.dp).onGloballyPositioned { me = it }) {
         val v = m.marked
         val bi = if (v >= 0) m.blockOf[v] else -1
-        val l = m.layouts[bi]
-        val bc = m.coords[bi]
+        val bc = if (bi >= 0) m.coords[bi] else null
         val mine = me
         val hole = Path()
-        if (l != null && bc != null && mine != null && bc.isAttached) {
+        if (bc != null && mine != null && bc.isAttached) {
+            val bl = m.blockLayout(bi)
+            val l = bl.layout
             val px = m.pxPerDp
             val inset = m.size * m.font.lineHeight * px * 0.07f
             for (r in m.verseRects(bi, v, l)) {
-                val tl = mine.localPositionOf(bc, Offset(r.left - 12 * px, r.top + inset - 4 * px))
-                val br = mine.localPositionOf(bc, Offset(r.right + 12 * px, r.bottom - inset + 4 * px))
+                val tl = mine.localPositionOf(bc, Offset(r.left - 12 * px, r.top + inset - 4 * px - bl.shift))
+                val br = mine.localPositionOf(bc, Offset(r.right + 12 * px, r.bottom - inset + 4 * px - bl.shift))
                 hole.addRoundRect(RoundRect(Rect(tl, br), CornerRadius(14 * px)))
             }
         }

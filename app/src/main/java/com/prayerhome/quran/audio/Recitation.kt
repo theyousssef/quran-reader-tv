@@ -139,6 +139,13 @@ class Recitation(private val ctx: Context, private val prefs: Prefs) {
         Log.i(TAG, "stop; files on disk: ${fileCount()}")
     }
 
+    /** Move the recitation to [surah]:[ayah] (its basmala first for verse 1) and keep reciting from there. */
+    fun seek(surah: Int, ayah: Int) {
+        if (!_state.value.active) { start(surah, ayah); return }
+        jump(surah, ayah, ayah == 1 && Quran.hasBasmalaHeader(surah))
+        play()
+    }
+
     fun next() {
         val s = _state.value
         if (!s.active) return
