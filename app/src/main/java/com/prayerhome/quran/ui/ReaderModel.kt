@@ -28,7 +28,7 @@ import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.sp
 import com.prayerhome.quran.App
-import com.prayerhome.quran.audio.HomeBridge
+import com.prayerhome.quran.audio.LeaveGuard
 import com.prayerhome.quran.data.Quran
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -609,15 +609,15 @@ class ReaderModel(val app: App, val quran: Quran, private val scope: CoroutineSc
             marked >= 0 -> marked = -1
             else -> {
                 val s = rec.state.value
-                if (s.active && s.playing && !HomeBridge.prayerHomeIsHome(app)) openPopup(Popup.EXIT)
+                if (s.active && s.playing) openPopup(Popup.EXIT)
                 else exit()
             }
         }
     }
 
-    /** The exit prompt (only without Prayer Home as the Home app). */
-    fun exitKeepPlaying() { popup = Popup.NONE; HomeBridge.keepPlayingOnExit = true; exit() }
-    fun exitPause() { popup = Popup.NONE; rec.pause(); exit() }
+    /** The "keep playing?" prompt (Back or Home while reciting): both answers go to the home screen. */
+    fun exitKeepPlaying() { popup = Popup.NONE; LeaveGuard.leave(app, keepPlaying = true) }
+    fun exitPause() { popup = Popup.NONE; LeaveGuard.leave(app, keepPlaying = false) }
 
     /** Keys while the reading column has focus. */
     fun onReaderKey(code: Int, down: Boolean): Boolean {

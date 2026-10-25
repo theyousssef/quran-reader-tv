@@ -12,8 +12,18 @@ if [[ -z $APK ]]; then
   APK=app/build/outputs/apk/release/app-release.apk
 fi
 
+SERVICE=com.prayerhome.quran/com.prayerhome.quran.audio.HomeKeyService
+
 adb connect "$TV" >/dev/null
 adb -s "$TV" install -r "$APK"
+
+# turn on the accessibility service that catches Home while reciting, keeping any others that are on
+current=$(adb -s "$TV" shell settings get secure enabled_accessibility_services | tr -d '\r')
+if [[ $current != *"$SERVICE"* && $current != *"com.prayerhome.quran/.audio.HomeKeyService"* ]]; then
+  if [[ -z $current || $current == null ]]; then new=$SERVICE; else new="$current:$SERVICE"; fi
+  adb -s "$TV" shell settings put secure enabled_accessibility_services "$new"
+fi
+adb -s "$TV" shell settings put secure accessibility_enabled 1
 
 # compile ahead-of-time so the reader opens and scrolls smoothly on the TV's CPU
 adb -s "$TV" shell cmd package compile -m speed -f com.prayerhome.quran >/dev/null

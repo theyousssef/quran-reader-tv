@@ -1,7 +1,8 @@
 # Quran Reader
 
-A light Quran reader for Android / Google TV, made as a companion to the
-[Prayer Home](https://github.com/theyousssef/prayer-home-tv) launcher. Kotlin + Jetpack Compose, laid out on a 1920×1080 canvas,
+A light Quran reader for Android / Google TV, made alongside the
+[Prayer Home](https://github.com/theyousssef/prayer-home-tv) launcher but independent of it: it
+works the same with any launcher. Kotlin + Jetpack Compose, laid out on a 1920×1080 canvas,
 driven entirely by the TV remote.
 
 ## Features
@@ -37,7 +38,7 @@ driven entirely by the TV remote.
 | | ◀ | open the menu on the Surah tab |
 | | ▶ | move to the toolbar (Quran font, A−, A+, reciter, theme) |
 | | OK | mark the first verse on screen |
-| | Back | leave the app |
+| | Back | leave the app (while reciting, asks first: see below) |
 | Verse marked | ◀ / ▶ | next / previous verse (reading right to left) |
 | | ▲ / ▼ | scroll and keep the mark |
 | | OK | options: **Recite from here** · **Bookmark verse** (moves the bookmark) |
@@ -71,19 +72,39 @@ In this mode the **reciter** is chosen with the reciter button at the right end 
 The toolbar's reciter button is hidden then, and there is no Stop button. To stop, use the exit
 banner (or the remote's stop key). Outside the mode the reciter button is in the toolbar.
 
-### Leaving while reciting (with Prayer Home)
+### Leaving while reciting
 
-If you press Home or Back while a verse is playing, the reader waits up to 2.5 s for Prayer Home's
-`com.prayerhome.quran.action.HOME_SHOWN`.
+If you press **Back** or **Home** while a verse is playing (not paused), the reader asks *Keep
+reciting in the background?* every time:
 
-- **Home came up:** playback continues and the reader sends `com.prayerhome.tv.action.ASK_KEEP_PLAYING`
-  (extra `title`). Prayer Home then asks *Keep playing / Pause*, and answers with `…action.PAUSE` or
-  `…action.KEEP_PLAYING`.
-- **Something else opened:** the reader pauses.
-- **Leaving Home later:** while the reader plays in the background, Prayer Home's `…action.HOME_HIDDEN`
-  pauses it, unless the reader itself is the app coming back to the front.
+- **Keep playing** goes to the home screen and the recitation carries on. It pauses by itself as
+  soon as anything other than the home screen comes up (another app, a TV input, Settings…).
+  Coming back to the reader is fine. Pop-ups that sit on top of the screen, such as the volume bar
+  or Prayer Home's prayer and match banners, don't count.
+- **Pause** pauses, then goes to the home screen.
+- **Back** on the question closes it and you stay in the reader.
 
-If Prayer Home isn't the Home app, the reader asks in-app on Back and pauses on Home.
+When the recitation is paused or not started, Back and Home just leave. Leaving any other way while
+it plays (for example a remote button that opens another app) pauses it.
+
+**The accessibility service.** An app can't normally see the Home key, so the reader comes with a
+small accessibility service, *Quran Reader: ask before leaving*. `install-to-tv.sh` turns it on
+(next to any others that are on). It only does something while the reader is on screen and
+reciting: then it holds back the Home key and asks the reader to show the question. After *Keep
+playing* it watches which app is in front, until the recitation pauses or you return to the reader.
+The rest of the time it doesn't touch the remote at all. It doesn't read or store what's on screen.
+
+One side effect: while it holds the Home key (reader open and reciting), **holding a volume key
+changes the volume by one step only**; press repeatedly instead. Everywhere else, and whenever the
+recitation is paused, holding volume works as usual. The TV does this to any accessibility service that
+filters remote keys.
+
+**Without the service** (not turned on, or installed with plain `adb install`): Back still asks.
+Home can't be caught, so leaving with Home while reciting pauses. After *Keep playing* on Back, the
+reader can't tell what's in front, so the recitation keeps going until you pause it (the remote's
+play/pause key works from anywhere) or another app starts playing sound.
+To turn it on by hand: Settings → System → Accessibility → *Quran Reader: ask before leaving*, or
+rerun `install-to-tv.sh`.
 
 ## Install
 
@@ -96,8 +117,9 @@ debugging (Settings → System → Developer options; the first time, pair with 
 ./install-to-tv.sh <tv-ip:port>                    # or build, install and AOT-compile
 ```
 
-Plain `adb install -r quran-reader.apk` works too. Nothing else is needed: no permissions to grant,
-and nothing to disable. To build by hand, use JDK 21 (Gradle 8.13 fails on JDK 25):
+The script also turns on the reader's accessibility service (see *Leaving while reciting*), adding
+it to `enabled_accessibility_services` without removing any other service. Plain
+`adb install -r quran-reader.apk` works too, but then the service is off until you turn it on. To build by hand, use JDK 21 (Gradle 8.13 fails on JDK 25):
 
 ```sh
 JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home ./gradlew assembleRelease
@@ -114,7 +136,8 @@ data/   Quran.kt   bundled text loader, surah/juz/page lookup
         Prefs.kt   settings, scroll position, bookmark
 audio/  Recitation.kt      download window + gapless MediaPlayer chain + audio focus
         PlaybackService.kt mediaPlayback foreground service + MediaSession
-        HomeBridge.kt      the Prayer Home contract (manifest receiver ControlReceiver)
+        LeaveGuard.kt      what leaving while reciting does (ask, keep playing, pause)
+        HomeKeyService.kt  accessibility service: catches Home while reciting, watches the front app
 ui/     ReaderModel.kt     reading state, remote-key logic, scrolling/following
         ReaderScreen.kt    reading column, headers, verse markers, progress rail
         Parts.kt           menu, rail, toolbar, player bar, pickers, verse options

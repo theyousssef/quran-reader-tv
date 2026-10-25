@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Quran Reader</string>
+    <string name="home_service_label">Quran Reader: ask before leaving</string>
+    <string name="home_service_description">While Quran Reader is open and reciting, pressing Home asks whether to keep playing or pause first. If you keep playing, the recitation pauses as soon as you open anything other than the home screen. At all other times it does nothing with your remote. It doesn\'t read or store anything you see or type.</string>
 </resources>
