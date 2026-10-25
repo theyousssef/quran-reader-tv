@@ -359,7 +359,9 @@ private fun ProgressRail(m: ReaderModel, f: Frame) {
     val total = Quran.ayahs(s)
     val ayah = (if (reciting) rs.ayah else m.progressVerse - Quran.surahStart(s) + 1).coerceIn(1, total)
     val still = ayah.toFloat() / total
-    val frac: () -> Float = if (reciting) ({ ((ayah - 1 + m.clipProgress.floatValue) / total).coerceIn(0f, 1f) }) else ({ if (m.recMode) 0f else still })
+    // While reciting, the model sets the surah's progress in the same frame as the verse changes, so the knob
+    // never shows the new verse with the old verse's progress for a frame.
+    val frac: () -> Float = if (reciting) ({ m.surahProgress.floatValue }) else ({ if (m.recMode) 0f else still })
     val h = 1080 - f.barTop - f.barBottom
     val x = 1920 - f.barRight - 6
     val px = m.pxPerDp
