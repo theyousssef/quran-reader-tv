@@ -37,6 +37,9 @@ object LeaveGuard {
     /** The accessibility service is connected (so Home can be caught and the front app watched). */
     @Volatile var serviceConnected = false
 
+    /** The "Home won't ask" hint was shown this session (once per process). */
+    var serviceHintShown = false
+
     fun reciting(ctx: Context): Boolean {
         val s = com.prayerhome.quran.App.of(ctx).recitation.state.value
         return s.active && s.playing

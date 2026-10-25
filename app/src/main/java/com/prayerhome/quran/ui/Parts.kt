@@ -366,6 +366,10 @@ fun Rail(m: ReaderModel, f: Frame) {
             }
             Ar(Quran.nameAr(s), th.arUi, if (round) 26 else 22, if (th.deco == Deco.INDIGO) th.gold else th.arAccent, weight = th.arUiWeight, lineHeight = if (round) 1.5f else 0f)
         }
+        // Display-only like the rest of the rail (focus never lands here): bookmark, Surah list, Juz list.
+        Box(Modifier.size(btn.dp), contentAlignment = Alignment.Center) {
+            Icon(Ico.BOOKMARK, th.muted, if (round) 22 else 24)
+        }
         for ((i, ico) in listOf(Ico.LIST, Ico.LAYERS).withIndex()) {
             val on = i == 0
             Box(Modifier.size(btn.dp).clip(shape).background(if (on) th.card else Color.Transparent), contentAlignment = Alignment.Center) {

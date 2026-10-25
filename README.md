@@ -19,7 +19,8 @@ driven entirely by the TV remote.
   from 36 to 84 px with A− / A+.
 - **Left menu** with Surah and Juz tabs, plus *Continue from bookmark*. Opening a juz goes to its
   first verse and lights it up for a few seconds, the same way the bookmark does. Each juz is labelled
-  with the first words of the verse it starts at.
+  with the first words of the verse it starts at. Closed, the menu is a narrow rail showing the
+  current surah and display-only icons for the bookmark, the Surah and Juz lists, and the home screen.
 - **One bookmark**, always set (Al-Fatiha 1 until you move it). *Continue from bookmark* goes to it
   and lights it up for a few seconds. *Bookmark verse* moves it; there is no "remove".
 - **Recitation verse by verse** from ten reciters on everyayah.com. The next verse starts with no
@@ -109,12 +110,14 @@ remote that repeats a held key by itself the hold then carries on normally. On o
 repeating to the TV, the first hold moves one step only; let go and hold again within 2 seconds and
 it keeps going.
 
-**Without the service** (not turned on, or installed with plain `adb install`): Back still asks.
+**Without the service** (not turned on, installed with plain `adb install`, or switched on but not
+running, which can happen on TCL TVs: see *Install*): Back still asks.
 Home can't be caught, so leaving with Home while reciting pauses. After *Keep playing* on Back, the
 reader can't tell what's in front, so the recitation keeps going until you pause it (the remote's
 play/pause key works from anywhere) or another app starts playing sound.
 To turn it on by hand: Settings → System → Accessibility → *Quran Reader: ask before leaving*, or
-rerun `install-to-tv.sh`.
+rerun `install-to-tv.sh`. When a recitation starts without the service, the reader shows a short
+note once per session.
 
 ## Install
 
@@ -129,7 +132,45 @@ debugging (Settings → System → Developer options; the first time, pair with 
 
 The script also turns on the reader's accessibility service (see *Leaving while reciting*), adding
 it to `enabled_accessibility_services` without removing any other service. Plain
-`adb install -r quran-reader.apk` works too, but then the service is off until you turn it on. To build by hand, use JDK 21 (Gradle 8.13 fails on JDK 25):
+`adb install -r quran-reader.apk` works too, but then the service is off until you turn it on.
+
+**TCL TVs.** TCL's Google TVs have an app-start guard (*TclAppBoot*) that stops an app from being
+started in the background unless it is allowed to auto-start. Installing an update stops the reader,
+and the system then has to start it again in the background to run its accessibility service. The
+guard blocks that, so the service stays switched on in Settings but never runs, and Home leaves
+without asking. So the script:
+
+1. allows the reader to auto-start (the `AUTO_START` and `ASSOC_START` app ops; on other TVs these
+   commands do nothing), and
+2. checks after installing that the service is really running. If it is on but not running, it
+   takes the reader's service out of the list of accessibility services and puts it back, which makes
+   the system start it. The other services in the list (Custom Mapper, for example) are left alone.
+
+If a recitation starts while the service isn't running, the reader says so once per session, in a
+small note at the bottom: *Home won't ask before leaving*.
+
+To do the same by hand:
+
+```sh
+adb shell cmd appops set com.prayerhome.quran AUTO_START allow
+adb shell cmd appops set com.prayerhome.quran ASSOC_START allow
+adb shell cmd appops get com.prayerhome.quran                    # both should now say allow
+
+# is the service running? "Quran Reader: ask before leaving" must be under "Bound services",
+# not only under "Enabled services"
+adb shell dumpsys accessibility | grep -A3 "Bound services"
+
+# if it isn't: note the list, put it back without the reader's entry, then put the full list back
+adb shell settings get secure enabled_accessibility_services
+#   e.g. com.prayerhome.quran/.audio.HomeKeyService:com.locflix.button/.NetflixKeyService
+adb shell settings put secure enabled_accessibility_services com.locflix.button/.NetflixKeyService
+adb shell settings put secure enabled_accessibility_services com.prayerhome.quran/.audio.HomeKeyService:com.locflix.button/.NetflixKeyService
+```
+
+Don't force-stop the reader (`am force-stop`, `am start -S`): that stops the service too, and on a TCL
+TV it may not come back until you do the steps above.
+
+To build by hand, use JDK 21 (Gradle 8.13 fails on JDK 25):
 
 ```sh
 JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home ./gradlew assembleRelease

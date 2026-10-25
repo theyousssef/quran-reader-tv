@@ -149,6 +149,11 @@ class HomeKeyService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
+    override fun onUnbind(intent: Intent?): Boolean {
+        LeaveGuard.serviceConnected = false
+        return super.onUnbind(intent)
+    }
+
     override fun onDestroy() {
         LeaveGuard.serviceConnected = false
         volumeReceiver?.let { runCatching { unregisterReceiver(it) } }

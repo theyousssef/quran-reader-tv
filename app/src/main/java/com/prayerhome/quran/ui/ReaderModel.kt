@@ -34,7 +34,9 @@ import com.prayerhome.quran.data.Quran
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
@@ -667,10 +669,25 @@ class ReaderModel(val app: App, val quran: Quran, private val scope: CoroutineSc
         scope.launch { frames(n); runCatching { r.requestFocus() } }
     }
 
-    fun showToast(msg: String) {
+    fun showToast(msg: String, ms: Long = 2200) {
         toast = msg
         toastJob?.cancel()
-        toastJob = scope.launch { delay(2200); toast = null }
+        toastJob = scope.launch { delay(ms); toast = null }
+    }
+
+    init {
+        // Once per session: a recitation starts while the Home catcher isn't connected, so Home will just
+        // leave (and pause) instead of asking. Checked a moment later, as the service may still be binding.
+        scope.launch {
+            rec.state.map { it.active && it.playing }.distinctUntilChanged().collect { playing ->
+                if (!playing || LeaveGuard.serviceConnected || LeaveGuard.serviceHintShown) return@collect
+                delay(1500)
+                if (LeaveGuard.serviceConnected || LeaveGuard.serviceHintShown || !LeaveGuard.resumed.value || !LeaveGuard.reciting(app)) return@collect
+                LeaveGuard.serviceHintShown = true
+                Log.i("QuranReader", "reciting without the accessibility service: hint shown")
+                showToast("Home won't ask before leaving: the reader's accessibility service isn't running", 6000)
+            }
+        }
     }
 
     // ------------------------------------------------------------ actions

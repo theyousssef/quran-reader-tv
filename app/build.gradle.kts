@@ -12,8 +12,8 @@ android {
         applicationId = "com.prayerhome.quran"
         minSdk = 28
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "1.5"
     }
 
     buildTypes {
