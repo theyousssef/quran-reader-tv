@@ -676,7 +676,7 @@ private fun OptionButton(th: QTheme, modifier: Modifier, fr: FocusRequester, pri
     }
 }
 
-/** Fallback when Prayer Home isn't the Home app: ask before leaving while reciting. */
+/** Back or Home while reciting: keep playing on the home screen, or pause. Back here stays in the reader. */
 @Composable
 fun ExitPrompt(m: ReaderModel, f: Frame) {
     val th = m.theme
@@ -692,8 +692,8 @@ fun ExitPrompt(m: ReaderModel, f: Frame) {
             T("Keep reciting in the background?", th.display, 28, th.text, weight = th.displayWeight)
             T("${PlaybackService.title(rs)} · ${rs.reciter.en}. The recitation can go on while you're on the home screen.", th.ui, 18, th.muted, maxLines = 3, lineHeight = 1.4f)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OptionButton(th, Modifier.weight(1f), reqs[0], true, Ico.PLAY, "Keep playing", "Leave and keep listening") { m.exitKeepPlaying() }
-                OptionButton(th, Modifier.weight(1f), reqs[1], false, Ico.PAUSE, "Pause", "Pause, then leave") { m.exitPause() }
+                OptionButton(th, Modifier.weight(1f), reqs[0], true, Ico.PLAY, "Keep playing", "Go to the home screen, keep listening") { m.exitKeepPlaying() }
+                OptionButton(th, Modifier.weight(1f), reqs[1], false, Ico.PAUSE, "Pause", "Pause, then go to the home screen") { m.exitPause() }
             }
         }
     }

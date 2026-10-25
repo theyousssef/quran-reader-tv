@@ -9,9 +9,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
-    <!-- package visibility: is Prayer Home installed and the Home app? -->
+    <!-- package visibility: which app is the home screen? -->
     <queries>
-        <package android:name="com.prayerhome.tv" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
@@ -46,16 +45,18 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
-        <!-- Prayer Home tells us when the home screen shows / hides, and relays the user's choice. -->
-        <receiver
-            android:name=".audio.ControlReceiver"
-            android:exported="true">
+        <!-- catches Home while reciting so the reader can ask "Keep playing / Pause" first -->
+        <service
+            android:name=".audio.HomeKeyService"
+            android:exported="false"
+            android:label="@string/home_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
-                <action android:name="com.prayerhome.quran.action.HOME_SHOWN" />
-                <action android:name="com.prayerhome.quran.action.HOME_HIDDEN" />
-                <action android:name="com.prayerhome.quran.action.PAUSE" />
-                <action android:name="com.prayerhome.quran.action.KEEP_PLAYING" />
+                <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
-        </receiver>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/home_key_service" />
+        </service>
     </application>
 </manifest>

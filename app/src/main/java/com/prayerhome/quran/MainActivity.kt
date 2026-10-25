@@ -23,7 +23,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
-import com.prayerhome.quran.audio.HomeBridge
+import com.prayerhome.quran.audio.LeaveGuard
+import com.prayerhome.quran.ui.Popup
 import com.prayerhome.quran.ui.ReaderModel
 import com.prayerhome.quran.ui.ReaderScreen
 import com.prayerhome.quran.ui.THEMES
@@ -34,6 +35,8 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val app get() = App.of(this)
     private var model by mutableStateOf<ReaderModel?>(null)
+    /** The open "keep playing?" prompt came from Home (stay in the background) rather than Back (finish). */
+    private var askedByHome = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,7 +95,7 @@ class MainActivity : ComponentActivity() {
         val m = model ?: return super.dispatchKeyEvent(event)
         when (event.keyCode) {
             KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> {
-                if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) m.back()
+                if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) { askedByHome = false; m.back() }
                 return true
             }
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE,
@@ -105,15 +108,34 @@ class MainActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    override fun onStart() {
-        super.onStart()
-        HomeBridge.onActivityStart()
+    override fun onResume() {
+        super.onResume()
+        LeaveGuard.onResume()
+        LeaveGuard.askFromHome = {
+            val m = model
+            if (m != null && m.popup != Popup.EXIT) { askedByHome = true; m.openPopup(Popup.EXIT) }
+        }
+        LeaveGuard.goHome = {
+            runCatching { startActivity(LeaveGuard.homeIntent()) }
+            if (!askedByHome) finish()
+        }
+    }
+
+    override fun onPause() {
+        LeaveGuard.onPause()
+        super.onPause()
     }
 
     override fun onStop() {
         model?.onLeave()
-        HomeBridge.onActivityStop(this)
+        LeaveGuard.onStop(this)
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        LeaveGuard.askFromHome = null
+        LeaveGuard.goHome = null
+        super.onDestroy()
     }
 
     override fun onUserLeaveHint() {
