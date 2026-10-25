@@ -1,7 +1,7 @@
 # Quran Reader
 
 A light Quran reader for Android / Google TV, made as a companion to the
-[Prayer Home](../PrayerHome) launcher. Kotlin + Jetpack Compose, laid out on a 1920×1080 canvas,
+[Prayer Home](https://github.com/theyousssef/prayer-home-tv) launcher. Kotlin + Jetpack Compose, laid out on a 1920×1080 canvas,
 driven entirely by the TV remote.
 
 ## Features
@@ -62,12 +62,16 @@ If Prayer Home isn't the Home app, the reader asks in-app on Back and pauses on 
 
 ## Install
 
+Download `quran-reader.apk` from the [latest release](../../releases/latest). Then, with
+[adb](https://developer.android.com/tools/releases/platform-tools) connected to the TV over wireless
+debugging (Settings → System → Developer options; the first time, pair with `adb pair`), run:
+
 ```sh
-./install-to-tv.sh 192.168.1.50:5555            # build + install + AOT-compile
-./install-to-tv.sh 192.168.1.50:5555 quran.apk  # install a ready APK
+./install-to-tv.sh <tv-ip:port> quran-reader.apk   # install a ready APK
+./install-to-tv.sh <tv-ip:port>                    # or build, install and AOT-compile
 ```
 
-Plain `adb install -r app-release.apk` works too. Nothing else is needed: no permissions to grant,
+Plain `adb install -r quran-reader.apk` works too. Nothing else is needed: no permissions to grant,
 and nothing to disable. To build by hand, use JDK 21 (Gradle 8.13 fails on JDK 25):
 
 ```sh
