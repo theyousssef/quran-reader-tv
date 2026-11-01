@@ -6,6 +6,7 @@ import com.prayerhome.quran.audio.PlaybackService
 import com.prayerhome.quran.audio.Recitation
 import com.prayerhome.quran.data.Prefs
 import com.prayerhome.quran.data.Quran
+import com.prayerhome.quran.update.SelfUpdater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +28,8 @@ class App : Application() {
         prefs = Prefs(this)
         quran = scope.async(Dispatchers.Default) { Quran.load(this@App) }
         recitation = Recitation(this, prefs).also { r -> r.onActivated = { PlaybackService.start(this) } }
+        // never mid-recitation, paused included
+        SelfUpdater(this, "theyousssef/quran-reader-tv", BuildConfig.VERSION_NAME) { recitation.state.value.active }.start()
     }
 
     companion object {

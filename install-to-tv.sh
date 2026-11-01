@@ -29,6 +29,8 @@ adb -s "$TV" install -r "$APK"
 # (the app ops are kept across updates, but a first install creates them only now)
 adb -s "$TV" shell cmd appops set com.prayerhome.quran AUTO_START allow 2>/dev/null || true
 adb -s "$TV" shell cmd appops set com.prayerhome.quran ASSOC_START allow 2>/dev/null || true
+# lets the reader install its own updates without asking (Settings → Apps → Install unknown apps)
+adb -s "$TV" shell appops set com.prayerhome.quran REQUEST_INSTALL_PACKAGES allow
 
 # turn on the accessibility service that catches Home while reciting, keeping any others that are on
 current=$(adb -s "$TV" shell settings get secure enabled_accessibility_services | tr -d '\r')

@@ -32,6 +32,12 @@ driven entirely by the TV remote.
 - **Background playback** through a media foreground service with a MediaSession. The remote's
   play/pause, stop, next and previous keys work from the home screen too. Audio focus is handled:
   the reader pauses on permanent loss, and pauses then resumes on transient loss.
+- **Updates itself.** Once a day the reader asks this repository for its latest release. A newer one
+  is downloaded and installed over the reader, keeping your bookmark and settings, the next time the
+  reader isn't on screen and no recitation is going (paused counts as going). It installs without
+  asking once *Install unknown apps* is allowed for the reader (the install script does that);
+  otherwise the TV's install prompt shows the next time you open it. A release's tag is its version
+  (`v1.6`) and it carries `quran-reader.apk`, signed with the same key as the installed app.
 
 ### Remote control
 
@@ -155,6 +161,7 @@ To do the same by hand:
 adb shell cmd appops set com.prayerhome.quran AUTO_START allow
 adb shell cmd appops set com.prayerhome.quran ASSOC_START allow
 adb shell cmd appops get com.prayerhome.quran                    # both should now say allow
+adb shell appops set com.prayerhome.quran REQUEST_INSTALL_PACKAGES allow   # updates without asking
 
 # is the service running? "Quran Reader: ask before leaving" must be under "Bound services",
 # not only under "Enabled services"
