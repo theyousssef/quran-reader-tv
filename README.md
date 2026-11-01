@@ -36,7 +36,8 @@ driven entirely by the TV remote.
   is downloaded and installed over the reader, keeping your bookmark and settings, the next time the
   reader isn't on screen and no recitation is going (paused counts as going). It installs without
   asking once *Install unknown apps* is allowed for the reader (the install script does that);
-  otherwise the TV's install prompt shows the next time you open it. A release's tag is its version
+  otherwise the reader explains why and opens the switch for you (asked again a week later after
+  *Not now*), and the TV's install prompt shows the next time you open it. A release's tag is its version
   (`v1.6`) and it carries `quran-reader.apk`, signed with the same key as the installed app.
 
 ### Remote control

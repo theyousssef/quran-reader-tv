@@ -1,14 +1,17 @@
 package com.prayerhome.quran.update
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.Application
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +52,7 @@ class SelfUpdater(
             override fun onActivityStarted(activity: Activity) { started++ }
             override fun onActivityStopped(activity: Activity) { if (--started == 0) installWhenIdle() }
             override fun onActivityResumed(activity: Activity) {
+                askForInstallPermission(activity)
                 // the last silent attempt was refused: ask through the system prompt now that we're in front
                 if (prefs.getBoolean(KEY_ASK, false) && !installing.get() && apk.exists()) {
                     prefs.edit().putBoolean(KEY_ASK, false).apply()
@@ -68,6 +72,31 @@ class SelfUpdater(
                 delay(HOUR_MS)
             }
         }
+    }
+
+    /**
+     * Without "Install unknown apps" every update stops at a confirmation, so explain that and open
+     * the app's own switch in Settings. Asked again a week later if it's still off.
+     */
+    private fun askForInstallPermission(activity: Activity) {
+        if (Build.VERSION.SDK_INT < 26 || app.packageManager.canRequestPackageInstalls()) return
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong(KEY_ASKED_PERMISSION, 0) < WEEK_MS) return
+        prefs.edit().putLong(KEY_ASKED_PERMISSION, now).apply()
+        val name = app.applicationInfo.loadLabel(app.packageManager)
+        AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Turn on automatic updates")
+            .setMessage(
+                "$name can keep itself up to date, but Android needs your permission first. " +
+                    "Please allow it: on the next screen, turn on $name, then press Back."
+            )
+            .setPositiveButton("Allow") { _, _ ->
+                val settings = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${app.packageName}"))
+                runCatching { activity.startActivity(settings) }
+                    .onFailure { runCatching { activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)) } }
+            }
+            .setNegativeButton("Not now", null)
+            .show()
     }
 
     private fun check() {
@@ -178,8 +207,10 @@ class SelfUpdater(
         private const val TAG = "SelfUpdater"
         private const val KEY_LAST_CHECK = "last_check"
         private const val KEY_ASK = "ask_next_time"
+        private const val KEY_ASKED_PERMISSION = "asked_permission"
         private const val HOUR_MS = 60L * 60 * 1000
         private const val DAY_MS = 24 * HOUR_MS
+        private const val WEEK_MS = 7 * DAY_MS
 
         @Volatile internal var instance: SelfUpdater? = null
 
